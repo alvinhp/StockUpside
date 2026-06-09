@@ -84,20 +84,20 @@ async function load() {
         document.getElementById("app").innerHTML = errScreen(String(e));
     }
 }
-async function doSubscribe(email) {
-    const r = await fetch(API + "/subscribe", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, plan: "pro" }) });
+async function doSubscribe(email, plan = "monthly") {
+    const r = await fetch(API + "/subscribe", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, plan })
+    });
     const d = await r.json();
-    if (d.success && d.token) {
-        proToken = d.token;
-        localStorage.setItem("su_token", proToken);
-        tier = "pro";
-        closeModal("pw");
-        toast("🎉 Pro unlocked! (Demo mode — no payment taken)", "ok");
-        await load();
+    // Real Stripe: redirect to checkout
+    if (d.checkout_url) {
+        window.location.href = d.checkout_url;
+        return;
     }
-    else {
-        toast(d.error || "Subscription failed", "err");
-    }
+    // Fallback error handling
+    toast(d.error || "Subscription failed", "err");
 }
 async function doFreeSubscribe() {
     const input = document.getElementById("free-email-input");
@@ -637,7 +637,8 @@ function bindGlobals() {
             }
             subBtn.textContent = "Processing…";
             subBtn.disabled = true;
-            await doSubscribe(em);
+            await doSubscribe(em, "monthly"); // explicit plan
+            // If success, user is redirected; if error, button re-enables above
             subBtn.textContent = "Get Pro Access →";
             subBtn.disabled = false;
         };
@@ -650,7 +651,12 @@ function bindGlobals() {
                 document.getElementById("pw-email")?.focus();
                 return;
             }
-            await doSubscribe(em);
+            annBtn.textContent = "Processing…";
+            annBtn.disabled = true;
+            await doSubscribe(em, "annual");
+            // Note: if it succeeds, user gets redirected to Stripe so we never reach here
+            annBtn.textContent = "Get Annual →";
+            annBtn.disabled = false;
         };
     // Sort
     document.querySelectorAll(".th.sort").forEach(th => {

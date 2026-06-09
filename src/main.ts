@@ -92,16 +92,22 @@ async function load() {
   }
 }
 
-async function doSubscribe(email: string) {
-  const r = await fetch(API+"/subscribe",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email,plan:"pro"})});
+async function doSubscribe(email: string, plan: string = "monthly") {
+  const r = await fetch(API+"/subscribe",{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({email, plan})
+  });
   const d = await r.json();
-  if (d.success && d.token) {
-    proToken = d.token;
-    localStorage.setItem("su_token", proToken);
-    tier = "pro";
-    closeModal("pw"); toast("🎉 Pro unlocked! (Demo mode — no payment taken)", "ok");
-    await load();
-  } else { toast(d.error || "Subscription failed","err"); }
+  
+  // Real Stripe: redirect to checkout
+  if (d.checkout_url) {
+    window.location.href = d.checkout_url;
+    return;
+  }
+  
+  // Fallback error handling
+  toast(d.error || "Subscription failed","err");
 }
 
 async function doFreeSubscribe() {
@@ -630,18 +636,26 @@ function bindGlobals() {
 
   // Subscribe
   const subBtn = document.getElementById("pw-sub");
-  if (subBtn) subBtn.onclick = async () => {
-    const em = (document.getElementById("pw-email") as HTMLInputElement)?.value?.trim();
-    if (!em||!em.includes("@")) { toast("Enter a valid email","err"); return; }
-    subBtn.textContent = "Processing…"; (subBtn as HTMLButtonElement).disabled = true;
-    await doSubscribe(em);
-    subBtn.textContent = "Get Pro Access →"; (subBtn as HTMLButtonElement).disabled = false;
-  };
+if (subBtn) subBtn.onclick = async () => {
+  const em = (document.getElementById("pw-email") as HTMLInputElement)?.value?.trim();
+  if (!em||!em.includes("@")) { toast("Enter a valid email","err"); return; }
+  subBtn.textContent = "Processing…"; 
+  (subBtn as HTMLButtonElement).disabled = true;
+  await doSubscribe(em, "monthly");  // explicit plan
+  // If success, user is redirected; if error, button re-enables above
+  subBtn.textContent = "Get Pro Access →"; 
+  (subBtn as HTMLButtonElement).disabled = false;
+};
   const annBtn = document.getElementById("pw-ann");
   if (annBtn) annBtn.onclick = async () => {
     const em = (document.getElementById("pw-email") as HTMLInputElement)?.value?.trim();
     if (!em||!em.includes("@")) { toast("Enter your email first","err"); document.getElementById("pw-email")?.focus(); return; }
-    await doSubscribe(em);
+    annBtn.textContent = "Processing…";
+    (annBtn as HTMLButtonElement).disabled = true;
+    await doSubscribe(em, "annual");
+    // Note: if it succeeds, user gets redirected to Stripe so we never reach here
+    annBtn.textContent = "Get Annual →";
+    (annBtn as HTMLButtonElement).disabled = false;
   };
 
   // Sort
