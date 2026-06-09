@@ -989,7 +989,7 @@ fetchAndRender(7);
 </html>"""
 
 # ── CORS ───────────────────────────────────────────────────────────────────────
-ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "http://localhost:5000")
+ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "http://stockupside.io")
 
 @app.after_request
 def cors(r):
@@ -2831,8 +2831,8 @@ if __name__ == "__main__":
     init_db()
     threading.Thread(target=nightly_refresh, daemon=True).start()
     port = int(os.environ.get("PORT", 5000))
-    print(f"\n🚀  StockUpside.io is running at http://localhost:{port}\n")
+    print(f"\n🚀  StockUpside.io is running at http://stockupside.io\n")
     # Only open a browser tab in local dev — never on a headless server
     if os.environ.get("ENV", "development") == "development":
-        threading.Timer(1.2, lambda: webbrowser.open(f"http://localhost:{port}")).start()
+        threading.Timer(1.2, lambda: webbrowser.open(f"http://stockupside.io")).start()
     app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
