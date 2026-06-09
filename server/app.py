@@ -72,6 +72,23 @@ def nightly_refresh():
         finally:
             set_generating(False)
 
+def weekly_digest():
+    import schedule
+    schedule.every().monday.at("08:00").do(send_digest_job)
+    while True:
+        schedule.run_pending()
+        time.sleep(60)
+
+def send_digest_job():
+    stocks = get_stocks_cached()
+    con = get_db()
+    subs = con.execute("SELECT email FROM subscribers WHERE plan='free'").fetchall()
+    con.close()
+    for (addr,) in subs:
+        subj, html, text = digest_email_html(stocks, addr)
+        send_email(addr, subj, html, text)
+    print(f"  ✓  Weekly digest sent to {len(subs)} subscribers")
+
 # ── Stock universe ─────────────────────────────────────────────────────────────
 UNIVERSE = [
     ("NVDA","NVIDIA Corporation","Technology",2.89e12),
@@ -2893,6 +2910,7 @@ def static_files(path):
 if __name__ == "__main__":
     init_db()
     threading.Thread(target=nightly_refresh, daemon=True).start()
+    threading.Thread(target=weekly_digest, daemon=True).start()
     port = int(os.environ.get("PORT", 5000))
     print(f"\n🚀  StockUpside.io is running at http://localhost:{port}\n")
     # Only open a browser tab in local dev — never on a headless server
