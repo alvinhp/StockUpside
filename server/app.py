@@ -6,7 +6,7 @@ Serves the REST API on :5000 and static files from /public
 
 import json, sqlite3, time, datetime, hashlib, os, math, threading, webbrowser
 import smtplib, email.mime.multipart, email.mime.text
-from flask import Flask, jsonify, request, send_from_directory, Response
+from flask import Flask, jsonify, request, send_from_directory, Response, redirect
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
