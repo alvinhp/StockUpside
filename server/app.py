@@ -1232,11 +1232,12 @@ def api_subscribe():
         return Response(status=200)
     body  = request.get_json(force=True) or {}
     email = body.get("email", "").strip().lower()
-    plan  = body.get("plan", "monthly")  # "monthly" or "annual"
+    plan  = body.get("plan", "monthly")
 
     if not email or "@" not in email:
         return jsonify({"error": "Invalid email"}), 400
 
+    stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "")
     price_id = (
         os.environ.get("STRIPE_PRICE_ANNUAL")
         if plan == "annual"
@@ -1254,6 +1255,7 @@ def api_subscribe():
         )
         return jsonify({"checkout_url": session.url})
     except Exception as e:
+        print(f"  ⚠  Stripe error: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route("/success")
