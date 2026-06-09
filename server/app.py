@@ -1164,7 +1164,7 @@ def digest_email_html(stocks: list, email_addr: str) -> tuple[str, str]:
 
 # ── API Routes ─────────────────────────────────────────────────────────────────
 @app.route("/api/stocks")
-@limiter.limit("60 per hour")
+@limiter.limit("600 per hour")
 def api_stocks():
     tier   = request.args.get("tier", "free")
     stocks = get_stocks_cached()
@@ -1192,7 +1192,7 @@ def api_stocks():
                     "next_update": nxt})
 
 @app.route("/api/stats")
-@limiter.limit("60 per hour")
+@limiter.limit("600 per hour")
 def api_stats():
     stocks = get_stocks_cached()
 
@@ -2127,7 +2127,7 @@ def render_disclaimer_page() -> str:
 </html>"""
 
 @app.route("/api/accuracy")
-@limiter.limit("60 per hour")
+@limiter.limit("600 per hour")
 def api_accuracy():
     con = get_db()   # use get_db(), not sqlite3.connect directly
 
@@ -2243,7 +2243,7 @@ def changes_page():
     return Response(render_changes_page("both"), mimetype="text/html")
 
 @app.route("/api/changes")
-@limiter.limit("60 per hour")
+@limiter.limit("600 per hour")
 def api_changes():
     days = int(request.args.get("days", 30))
     con  = sqlite3.connect(DB_PATH)
@@ -2343,7 +2343,7 @@ def api_changes():
     })
 
 @app.route("/api/accuracy/<ticker>")
-@limiter.limit("60 per hour")
+@limiter.limit("600 per hour")
 def api_accuracy_ticker(ticker):
     """Per-stock accuracy history — used on individual stock pages."""
     ticker = ticker.upper()
