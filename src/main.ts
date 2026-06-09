@@ -63,6 +63,13 @@ function uClass(p: number): string {
 async function load() {
   setLoader(true);
   try {
+    const params = new URLSearchParams(window.location.search);
+    const urlProToken = params.get("pro_token");
+    if (urlProToken) {
+      proToken = urlProToken;
+      localStorage.setItem("su_token", proToken);
+      window.history.replaceState({}, "", "/");  // clean the URL
+    }
     if (proToken) {
       const v = await fetch(API+"/verify-token",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token:proToken})});
       const vd = await v.json();
@@ -477,6 +484,8 @@ function paywallModal() {
     </div>
   </div>`;
 }
+
+
 
 // ── Detail modal ───────────────────────────────────────────────────────────────
 // function renderDetail(s: Stock) {

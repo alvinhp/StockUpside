@@ -1222,6 +1222,9 @@ def api_stats():
         "generating":       is_generating(),
     })
 
+import stripe
+stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "")
+
 @app.route("/api/subscribe", methods=["POST", "OPTIONS"])
 @limiter.limit("10 per hour")
 def api_subscribe():
@@ -1229,19 +1232,60 @@ def api_subscribe():
         return Response(status=200)
     body  = request.get_json(force=True) or {}
     email = body.get("email", "").strip().lower()
+    plan  = body.get("plan", "monthly")  # "monthly" or "annual"
+
     if not email or "@" not in email:
         return jsonify({"error": "Invalid email"}), 400
-    # MOCK: in production replace with Stripe checkout session creation
-    token = hashlib.sha256(f"{email}pro{datetime.date.today()}".encode()).hexdigest()[:32]
+
+    price_id = (
+        os.environ.get("STRIPE_PRICE_ANNUAL")
+        if plan == "annual"
+        else os.environ.get("STRIPE_PRICE_MONTHLY")
+    )
+
     try:
-        con = get_db()
-        con.execute("INSERT OR REPLACE INTO subscribers(email,plan,created_at) VALUES(?,?,?)",
-                    (email, "pro", int(time.time())))
-        con.commit(); con.close()
+        session = stripe.checkout.Session.create(
+            payment_method_types=["card"],
+            line_items=[{"price": price_id, "quantity": 1}],
+            mode="subscription",
+            customer_email=email,
+            success_url="https://stockupside.io/success?session_id={CHECKOUT_SESSION_ID}",
+            cancel_url="https://stockupside.io/",
+        )
+        return jsonify({"checkout_url": session.url})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-    return jsonify({"success": True, "token": token, "plan": "pro",
-                    "message": "Welcome to Pro! (Demo — payment mocked)"})
+
+@app.route("/success")
+def success_page():
+    session_id = request.args.get("session_id", "")
+    if not session_id:
+        return redirect("/")
+
+    try:
+        session    = stripe.checkout.Session.retrieve(session_id)
+        email      = session.customer_details.email.strip().lower()
+        stripe_id  = session.customer
+
+        # Generate a token tied to their email
+        token = hashlib.sha256(
+            f"{email}:{stripe_id}:{os.environ.get('STRIPE_SECRET_KEY','')}".encode()
+        ).hexdigest()[:32]
+
+        con = get_db()
+        con.execute("""
+            INSERT OR REPLACE INTO subscribers (email, plan, stripe_id, created_at)
+            VALUES (?, 'pro', ?, ?)
+        """, (email, stripe_id, int(time.time())))
+        con.commit()
+        con.close()
+
+        # Pass the token to the frontend via URL fragment so it lands in localStorage
+        return redirect(f"/?pro_token={token}&welcome=1")
+
+    except Exception as e:
+        print(f"  ⚠  Success page error: {e}")
+        return redirect("/")
 
 @app.route("/api/subscribe-free", methods=["POST", "OPTIONS"])
 @limiter.limit("10 per hour")
@@ -1369,9 +1413,26 @@ def api_verify():
     if request.method == "OPTIONS":
         return Response(status=200)
     body  = request.get_json(force=True) or {}
-    token = body.get("token", "")
-    valid = bool(token) and len(token) >= 10
-    return jsonify({"valid": valid, "plan": "pro" if valid else "free"})
+    token = body.get("token", "").strip()
+    if not token:
+        return jsonify({"valid": False, "plan": "free"})
+
+    # Recompute expected token for every pro subscriber and compare
+    con  = get_db()
+    subs = con.execute(
+        "SELECT email, stripe_id FROM subscribers WHERE plan='pro'"
+    ).fetchall()
+    con.close()
+
+    stripe_key = os.environ.get("STRIPE_SECRET_KEY", "")
+    for email, stripe_id in subs:
+        expected = hashlib.sha256(
+            f"{email}:{stripe_id}:{stripe_key}".encode()
+        ).hexdigest()[:32]
+        if token == expected:
+            return jsonify({"valid": True, "plan": "pro"})
+
+    return jsonify({"valid": False, "plan": "free"})
 
 @app.route("/api/refresh", methods=["POST"])
 @limiter.limit("5 per hour")
