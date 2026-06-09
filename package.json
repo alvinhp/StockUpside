@@ -1,0 +1,19 @@
+{
+  "name": "stockupside-io",
+  "version": "1.0.0",
+  "description": "Top 100 stocks by analyst upside potential — updated daily",
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc --watch",
+    "start": "python3 server/app.py",
+    "dev": "python3 server/app.py"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "author": "StockUpside.io",
+  "license": "MIT"
+}
