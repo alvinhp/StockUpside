@@ -892,7 +892,7 @@ function retColor(r) {{
 }}
 
 function renderSummaryCards(data) {{
-  const cp = data.checkpoints[currentDays] || {{}};
+  const cp = data.checkpoints[30] || {{}};
   if (!cp.total) return `
     <div class="no-data-card">
       <div class="no-data-icon">⏳</div>
@@ -941,7 +941,7 @@ function renderByConsensus(data) {{
   if (!data.by_consensus.length) return '';
   return `
     <div class="atr-section">
-      <div class="atr-section-title">ACCURACY BY CONSENSUS RATING ({currentDays}-DAY)</div>
+      <div class="atr-section-title">ACCURACY BY CONSENSUS RATING ({30}-DAY)</div>
       <table class="atr-table">
         <thead><tr>
           <th>RATING</th>
@@ -1060,9 +1060,9 @@ function renderAll(data) {{
   
   const tabsHtml = `
     <div class="atr-tabs" style="margin-bottom:28px">
-      <button class="atr-tab ${{currentDays===30?'active':''}}" data-days="30">30 Days</button>
-      <button class="atr-tab ${{currentDays===60?'active':''}}" data-days="60">60 Days</button>
-      <button class="atr-tab ${{currentDays===90?'active':''}}" data-days="90">90 Days</button>
+      <button class="atr-tab ${{30===30?'active':''}}" data-days="30">30 Days</button>
+      <button class="atr-tab ${{30===60?'active':''}}" data-days="60">60 Days</button>
+      <button class="atr-tab ${{30===90?'active':''}}" data-days="90">90 Days</button>
     </div>`;
 
   document.getElementById('atr-content').innerHTML =
@@ -1075,7 +1075,7 @@ function renderAll(data) {{
   // Bind tabs
   document.querySelectorAll('.atr-tab').forEach(btn => {{
     btn.addEventListener('click', () => {{
-      currentDays = parseInt(btn.dataset.days);
+      30 = parseInt(btn.dataset.days);
       renderAll(data);
     }});
   }});
