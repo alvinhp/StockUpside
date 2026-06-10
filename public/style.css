@@ -173,10 +173,18 @@ select, input { font-family: var(--font-sans); }
 
 /* ── Stats bar ── */
 .sbar {
-  display: flex; gap: 0;
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 12px;
+  padding: 16px 20px;
   background: var(--bg2);
   border-bottom: 1px solid var(--border);
-  overflow-x: auto;
+}
+
+@media (max-width: 768px) {
+  .sbar {
+    display: none;  /* Hide on mobile */
+  }
 }
 .scard {
   flex:1;min-width:140px;
@@ -820,4 +828,93 @@ select, input { font-family: var(--font-sans); }
         align-items: flex-start;
         gap: 4px;
     }
+}
+
+/* ── Mobile card view ────────────────────────────────────────────────────────── */
+.tr-mobile {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  /* Hide desktop table columns on mobile */
+  .tbl tbody tr:not(.tr-mobile) {
+    display: none;
+  }
+  
+  .tr-mobile {
+    display: table-row;
+  }
+  
+  .tr-mobile td {
+    padding: 0 !important;
+    border: none !important;
+  }
+
+  .mobile-card {
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 12px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+
+  .mobile-card:active {
+    background: var(--bg3);
+  }
+
+  .mc-header {
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .mc-ticker {
+    font-family: var(--font-mono);
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--accent);
+    margin-bottom: 4px;
+  }
+
+  .mc-name {
+    font-size: 12px;
+    color: var(--text2);
+  }
+
+  .mc-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+
+  .mc-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .mc-label {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--text3);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .mc-value {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .mc-value.pos {
+    color: #69f0ae;
+  }
+
+  .mc-value.neg {
+    color: #f85149;
+  }
 }

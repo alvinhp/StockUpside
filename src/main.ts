@@ -216,6 +216,7 @@ function header() {
     <div class="hdr-r">
       <a href="/changes" class="hdr-link">Rating Changes</a>
       <a href="/accuracy" class="hdr-link">Accuracy</a>
+      <a href="/analyst-track-record" class="hdr-link">Track Record</a>
       <a href="/stocks" class="hdr-link">All Stocks</a>
       <div class="live-chip"><span class="live-dot"></span>LIVE</div>
       <div class="refresh-chip">
@@ -399,6 +400,7 @@ function row(s: Stock): string {
 
   const medal = s.rank===1?"🥇":s.rank===2?"🥈":s.rank===3?"🥉":"";
   const ytdCls = s.ytd_change >= 0 ? "pos" : "neg";
+  
   return `
     <tr class="tr-stock" data-ticker="${s.ticker}">
       <td class="td-rank">${medal||s.rank}</td>
@@ -417,6 +419,43 @@ function row(s: Stock): string {
       <td><span class="con-badge" style="color:${cRating(s.consensus)};border-color:${cRating(s.consensus)}33">${s.consensus}</span></td>
       ${momentumBadge(s)}
       <td class="${ytdCls}">${pct(s.ytd_change)}</td>
+    </tr>
+    <!-- Mobile card view (hidden on desktop) -->
+    <tr class="tr-mobile">
+      <td colspan="11">
+        <div class="mobile-card">
+          <div class="mc-header">
+            <div class="mc-ticker">${s.ticker}</div>
+            <div class="mc-name">${s.name}</div>
+          </div>
+          <div class="mc-grid">
+            <div class="mc-stat">
+              <span class="mc-label">Analyst Upside</span>
+              <span class="mc-value pos">${pct(s.upside_pct)}</span>
+            </div>
+            <div class="mc-stat">
+              <span class="mc-label">YTD Change</span>
+              <span class="mc-value ${ytdCls}">${pct(s.ytd_change)}</span>
+            </div>
+            <div class="mc-stat">
+              <span class="mc-label">Consensus</span>
+              <span class="mc-value" style="color:${cRating(s.consensus)}">${s.consensus}</span>
+            </div>
+            <div class="mc-stat">
+              <span class="mc-label">Analysts</span>
+              <span class="mc-value">${s.analyst_count}</span>
+            </div>
+            <div class="mc-stat">
+              <span class="mc-label">Momentum</span>
+              <span class="mc-value">${s.momentum_trend === "up" ? "↑ Improving" : s.momentum_trend === "down" ? "↓ Weakening" : "→ Neutral"}</span>
+            </div>
+            <div class="mc-stat">
+              <span class="mc-label">Sector</span>
+              <span class="mc-value">${s.sector}</span>
+            </div>
+          </div>
+        </div>
+      </td>
     </tr>`;
 }
 
@@ -435,6 +474,7 @@ function footer() {
     <nav class="ftr-mobile-nav">
       <a href="/changes" class="ftr-nav-link">Rating Changes</a>
       <a href="/accuracy" class="ftr-nav-link">Accuracy</a>
+      <a href="/analyst-track-record" class="ftr-nav-link">Track Record</a>
       <a href="/stocks"   class="ftr-nav-link">All Stocks</a>
       <a href="/privacy"  class="ftr-nav-link">Privacy</a>
       <a href="/disclaimer" class="ftr-nav-link">Disclaimer</a>
@@ -572,19 +612,25 @@ function fixStickyOffset() {
     const ban  = document.querySelector(".banner") as HTMLElement;
     const sbar = document.querySelector(".sbar") as HTMLElement;
     const ctrl = document.querySelector(".ctrl") as HTMLElement;
+    
     if (hdr)  offset += hdr.offsetHeight;
     if (ban)  offset += ban.offsetHeight;
-    if (sbar) offset += sbar.offsetHeight;
+    // Don't add sbar height on mobile — it's hidden
+    if (sbar && window.innerWidth > 768) {
+      offset += sbar.offsetHeight;
+    }
 
-    // Set controls top (it stacks after sbar)
     if (ctrl) {
       ctrl.style.top = `${offset}px`;
       offset += ctrl.offsetHeight;
     }
 
-    // Set the wrapper height so the table fills remaining viewport
     const wrap = document.querySelector(".tbl-wrap") as HTMLElement;
-    if (wrap) wrap.style.height = `calc(100vh - ${offset}px)`;
+    if (wrap) {
+      // Add a bit of padding to prevent scrolling past the footer
+      const footerHeight = 60; // approximate
+      wrap.style.height = `calc(100vh - ${offset}px - ${footerHeight}px)`;
+    }
 
     document.documentElement.style.setProperty("--bars-height", `${offset}px`);
   });

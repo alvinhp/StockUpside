@@ -671,6 +671,19 @@ def init_db():
         checked_date TEXT,
         UNIQUE(snapshot_date, ticker, days_later))""")
 
+    con.execute("""CREATE TABLE IF NOT EXISTS analyst_targets (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT NOT NULL,
+        ticker TEXT NOT NULL,
+        analyst_firm TEXT,
+        analyst_name TEXT,
+        price_target REAL,
+        rating TEXT,
+        prior_target REAL,
+        prior_rating TEXT,
+        UNIQUE(date, ticker, analyst_firm)
+)""")
+
     con.commit()
     con.close()
 
@@ -737,6 +750,347 @@ def get_any_cached():
     ).fetchone()
     con.close()
     return json.loads(row[0]) if row else None
+
+def render_analyst_track_record() -> str:
+    yr = datetime.date.today().year
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Analyst Track Record | StockUpside.io</title>
+  <meta name="description" content="How accurate have Wall Street analyst price targets been? Track consensus accuracy by stock, sector, and rating type."/>
+  <meta property="og:title"       content="Analyst Track Record | StockUpside.io"/>
+  <meta property="og:description" content="Wall Street analyst accuracy tracked at 30, 60, and 90 days. See which sectors and ratings have the best track records."/>
+  <meta property="og:url"         content="https://stockupside.io/analyst-track-record"/>
+  <meta property="og:image"       content="https://stockupside.io/og-image.png"/>
+  <meta name="twitter:card"       content="summary_large_image"/>
+  <link rel="stylesheet" href="/style.css"/>
+  <style>
+    .atr-wrap {{ max-width:1100px; margin:0 auto; padding:32px 20px 64px; }}
+    .atr-wrap h1 {{ font-family:var(--font-mono); font-size:22px; margin-bottom:6px; }}
+    .atr-sub {{ color:var(--text2); font-size:13px; margin-bottom:32px; line-height:1.6; }}
+
+    /* ── Summary cards ── */
+    .atr-cards {{ display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:32px; }}
+    @media(max-width:768px) {{ .atr-cards {{ grid-template-columns:1fr 1fr; }} }}
+    @media(max-width:480px) {{ .atr-cards {{ grid-template-columns:1fr; }} }}
+    .atr-card {{ background:var(--bg2); border:1px solid var(--border); border-radius:8px; padding:20px; }}
+    .atr-card-lbl {{ font-family:var(--font-mono); font-size:9px; color:var(--text3);
+                     letter-spacing:.12em; margin-bottom:10px; }}
+    .atr-card-val {{ font-family:var(--font-mono); font-size:36px; font-weight:700;
+                     line-height:1; margin-bottom:4px; }}
+    .atr-card-sub {{ font-size:11px; color:var(--text2); }}
+
+    /* ── Period tabs ── */
+    .atr-tabs {{ display:flex; gap:0; margin-bottom:28px;
+                 border:1px solid var(--border); border-radius:6px;
+                 overflow:hidden; width:fit-content; }}
+    .atr-tab {{ padding:8px 20px; font-family:var(--font-mono); font-size:11px;
+                font-weight:600; letter-spacing:.06em; cursor:pointer;
+                background:var(--bg2); color:var(--text2); border:none;
+                transition:all .15s; }}
+    .atr-tab:hover {{ background:var(--bg3); color:var(--text); }}
+    .atr-tab.active {{ background:var(--accent); color:#000; }}
+
+    /* ── Tables ── */
+    .atr-section {{ margin-bottom:36px; }}
+    .atr-section-title {{ font-family:var(--font-mono); font-size:11px; color:var(--text3);
+                          letter-spacing:.12em; margin-bottom:16px; }}
+    .atr-table {{ width:100%; border-collapse:collapse; font-size:12px; }}
+    .atr-table th {{ padding:9px 14px; text-align:left; font-family:var(--font-mono);
+                     font-size:9px; color:var(--text3); letter-spacing:.1em;
+                     background:var(--bg2); border-bottom:2px solid var(--border); }}
+    .atr-table td {{ padding:10px 14px; border-bottom:1px solid var(--border); }}
+    .atr-table tr:hover td {{ background:var(--bg2); }}
+    .atr-table tr:last-child td {{ border-bottom:none; }}
+
+    /* ── Hit rate bar ── */
+    .hr-bar {{ display:flex; align-items:center; gap:10px; }}
+    .hr-track {{ flex:1; height:6px; background:var(--bg3); border-radius:3px; overflow:hidden; min-width:80px; }}
+    .hr-fill {{ height:100%; border-radius:3px; transition:width .3s; }}
+    .hr-pct {{ font-family:var(--font-mono); font-size:12px; font-weight:700; width:42px; }}
+
+    /* ── Best/Worst picks ── */
+    .picks-grid {{ display:grid; grid-template-columns:1fr 1fr; gap:24px; margin-bottom:32px; }}
+    @media(max-width:640px) {{ .picks-grid {{ grid-template-columns:1fr; }} }}
+    .picks-panel {{ background:var(--bg2); border:1px solid var(--border); border-radius:8px; overflow:hidden; }}
+    .picks-hdr {{ padding:14px 18px; border-bottom:1px solid var(--border);
+                  font-family:var(--font-mono); font-size:11px; font-weight:700;
+                  letter-spacing:.08em; }}
+    .pick-row {{ display:flex; align-items:center; gap:12px; padding:10px 18px;
+                 border-bottom:1px solid var(--border); text-decoration:none; transition:background .1s; }}
+    .pick-row:last-child {{ border-bottom:none; }}
+    .pick-row:hover {{ background:var(--bg3); }}
+    .pick-tk {{ font-family:var(--font-mono); font-size:13px; font-weight:700;
+                color:var(--accent); width:52px; flex-shrink:0; }}
+    .pick-ret {{ font-family:var(--font-mono); font-size:13px; font-weight:700; margin-left:auto; }}
+    .pick-detail {{ font-size:11px; color:var(--text3); flex:1; }}
+
+    /* ── No data state ── */
+    .no-data-card {{ background:var(--bg2); border:1px solid var(--border); border-radius:8px;
+                     padding:48px; text-align:center; }}
+    .no-data-icon {{ font-size:32px; margin-bottom:16px; }}
+    .no-data-title {{ font-family:var(--font-mono); font-size:14px; margin-bottom:8px; color:var(--text); }}
+    .no-data-sub {{ font-size:13px; color:var(--text2); line-height:1.6; max-width:420px; margin:0 auto; }}
+    .no-data-date {{ display:inline-block; margin-top:16px; font-family:var(--font-mono);
+                     font-size:11px; color:var(--accent); background:rgba(240,180,41,.1);
+                     border:1px solid rgba(240,180,41,.2); border-radius:4px; padding:6px 14px; }}
+  </style>
+</head>
+<body>
+<header class="hdr">
+  <div class="hdr-l">
+    <a href="/" class="brand" style="text-decoration:none">
+      <span class="brand-mark">▲</span>
+      <div><div class="brand-name">STOCKUPSIDE<span class="brand-io">.IO</span></div>
+        <div class="brand-tag">Analyst Price Target Intelligence</div></div>
+    </a>
+  </div>
+  <div class="hdr-r">
+    <a href="/accuracy" style="font-family:var(--font-mono);font-size:11px;
+       color:var(--text2);margin-right:16px">Accuracy</a>
+    <a href="/" style="font-family:var(--font-mono);font-size:11px;color:var(--text2)">← Dashboard</a>
+  </div>
+</header>
+
+<div class="atr-wrap">
+  <h1>Analyst Track Record</h1>
+  <p class="atr-sub">
+    How often do Wall Street price targets actually get hit?
+    We track every analyst consensus prediction in our database and measure
+    real outcomes at 30, 60, and 90 days. Data builds automatically —
+    check back as snapshots accumulate.
+  </p>
+
+  <div id="atr-content">
+    <div style="text-align:center;padding:40px;color:var(--text3);
+                font-family:var(--font-mono);font-size:12px">Loading…</div>
+  </div>
+</div>
+
+<footer class="ftr">
+  <div>© {yr} StockUpside.io · Not financial advice</div>
+  <div class="ftr-r">
+    <a href="/accuracy">Accuracy</a> ·
+    <a href="/changes">Changes</a> ·
+    <a href="/stocks">All Stocks</a>
+  </div>
+</footer>
+
+<script>
+let currentDays = 30;
+
+function hitColor(rate) {{
+  if (rate >= 60) return '#00e676';
+  if (rate >= 40) return '#ffd740';
+  return '#f85149';
+}}
+
+function retColor(r) {{
+  return r >= 0 ? '#69f0ae' : '#f85149';
+}}
+
+function renderSummaryCards(data) {{
+  const cp = data.checkpoints[currentDays] || {{}};
+  if (!cp.total) return `
+    <div class="no-data-card">
+      <div class="no-data-icon">⏳</div>
+      <div class="no-data-title">Building accuracy data...</div>
+      <div class="no-data-sub">
+        We need {currentDays} days of price history to measure analyst accuracy
+        at this interval. Data collection started on
+        <strong>${{data.collection_started}}</strong>.
+      </div>
+      <div class="no-data-date">
+        Check back after ${{getCheckDate(data.collection_started, currentDays)}}
+      </div>
+    </div>`;
+
+  const col = hitColor(cp.hit_rate);
+  return `
+    <div class="atr-cards">
+      <div class="atr-card">
+        <div class="atr-card-lbl">HIT RATE ({currentDays}D)</div>
+        <div class="atr-card-val" style="color:${{col}}">${{cp.hit_rate}}%</div>
+        <div class="atr-card-sub">of targets reached</div>
+      </div>
+      <div class="atr-card">
+        <div class="atr-card-lbl">STOCKS TRACKED</div>
+        <div class="atr-card-val">${{cp.total}}</div>
+        <div class="atr-card-sub">${{cp.hits}} targets hit</div>
+      </div>
+      <div class="atr-card">
+        <div class="atr-card-lbl">AVG RETURN (ALL)</div>
+        <div class="atr-card-val" style="color:${{retColor(cp.avg_return)}}">
+          ${{cp.avg_return >= 0 ? '+' : ''}}${{cp.avg_return}}%
+        </div>
+        <div class="atr-card-sub">following consensus</div>
+      </div>
+      <div class="atr-card">
+        <div class="atr-card-lbl">AVG RETURN (HITS)</div>
+        <div class="atr-card-val" style="color:#69f0ae">
+          +${{cp.avg_return_hits}}%
+        </div>
+        <div class="atr-card-sub">when target was reached</div>
+      </div>
+    </div>`;
+}}
+
+function renderByConsensus(data) {{
+  if (!data.by_consensus.length) return '';
+  return `
+    <div class="atr-section">
+      <div class="atr-section-title">ACCURACY BY CONSENSUS RATING ({currentDays}-DAY)</div>
+      <table class="atr-table">
+        <thead><tr>
+          <th>RATING</th>
+          <th>STOCKS TRACKED</th>
+          <th>HIT RATE</th>
+          <th>AVG RETURN</th>
+          <th>AVG RETURN (HITS)</th>
+        </tr></thead>
+        <tbody>
+          ${{data.by_consensus.map(r => {{
+            const col = hitColor(r.hit_rate);
+            const ratingColor = {{"Strong Buy":"#00e676","Buy":"#69f0ae","Hold":"#ffd740",
+                                  "Underperform":"#ff5252","Sell":"#d50000"}}[r.consensus] || "#aaa";
+            return `<tr>
+              <td><span style="color:${{ratingColor}};font-weight:700">${{r.consensus}}</span></td>
+              <td style="font-family:var(--font-mono)">${{r.total}}</td>
+              <td>
+                <div class="hr-bar">
+                  <div class="hr-track">
+                    <div class="hr-fill" style="width:${{r.hit_rate}}%;background:${{col}}"></div>
+                  </div>
+                  <span class="hr-pct" style="color:${{col}}">${{r.hit_rate}}%</span>
+                </div>
+              </td>
+              <td style="font-family:var(--font-mono);color:${{retColor(r.avg_return)}}">
+                ${{r.avg_return >= 0 ? '+' : ''}}${{r.avg_return}}%
+              </td>
+              <td style="font-family:var(--font-mono);color:#69f0ae">
+                +${{r.avg_return_hits || 0}}%
+              </td>
+            </tr>`;
+          }}).join('')}}
+        </tbody>
+      </table>
+    </div>`;
+}}
+
+function renderBySector(data) {{
+  if (!data.by_sector.length) return '';
+  return `
+    <div class="atr-section">
+      <div class="atr-section-title">ACCURACY BY SECTOR (90-DAY)</div>
+      <table class="atr-table">
+        <thead><tr>
+          <th>SECTOR</th>
+          <th>STOCKS</th>
+          <th>HIT RATE</th>
+          <th>AVG RETURN</th>
+        </tr></thead>
+        <tbody>
+          ${{data.by_sector.map(r => {{
+            const col = hitColor(r.hit_rate);
+            return `<tr>
+              <td style="color:var(--text)">${{r.sector}}</td>
+              <td style="font-family:var(--font-mono)">${{r.total}}</td>
+              <td>
+                <div class="hr-bar">
+                  <div class="hr-track">
+                    <div class="hr-fill" style="width:${{r.hit_rate}}%;background:${{col}}"></div>
+                  </div>
+                  <span class="hr-pct" style="color:${{col}}">${{r.hit_rate}}%</span>
+                </div>
+              </td>
+              <td style="font-family:var(--font-mono);color:${{retColor(r.avg_return)}}">
+                ${{r.avg_return >= 0 ? '+' : ''}}${{r.avg_return}}%
+              </td>
+            </tr>`;
+          }}).join('')}}
+        </tbody>
+      </table>
+    </div>`;
+}}
+
+function renderTopPicks(data) {{
+  if (!data.top_performers.length && !data.worst_performers.length) return '';
+  
+  const topRows = data.top_performers.map(r => `
+    <a href="/stocks/${{r.ticker}}" class="pick-row">
+      <span class="pick-tk">${{r.ticker}}</span>
+      <span class="pick-detail">${{r.days_later}}d · target ${{r.hit_target ? 'hit ✓' : 'missed'}}</span>
+      <span class="pick-ret" style="color:#69f0ae">
+        +${{r.actual_return}}%
+      </span>
+    </a>`).join('');
+
+  const worstRows = data.worst_performers.map(r => `
+    <a href="/stocks/${{r.ticker}}" class="pick-row">
+      <span class="pick-tk">${{r.ticker}}</span>
+      <span class="pick-detail">${{r.days_later}}d · target ${{r.hit_target ? 'hit ✓' : 'missed'}}</span>
+      <span class="pick-ret" style="color:#f85149">
+        ${{r.actual_return}}%
+      </span>
+    </a>`).join('');
+
+  return `
+    <div class="picks-grid">
+      <div class="picks-panel">
+        <div class="picks-hdr" style="color:#00e676">★ BEST CALLS</div>
+        ${{topRows || '<div style="padding:20px;color:var(--text3);font-size:12px">No data yet</div>'}}
+      </div>
+      <div class="picks-panel">
+        <div class="picks-hdr" style="color:#f85149">✗ WORST CALLS</div>
+        ${{worstRows || '<div style="padding:20px;color:var(--text3);font-size:12px">No data yet</div>'}}
+      </div>
+    </div>`;
+}}
+
+function getCheckDate(startDate, days) {{
+  const d = new Date(startDate + "T00:00:00");
+  d.setDate(d.getDate() + days);
+  return d.toLocaleDateString("en-US", {{ month: "long", day: "numeric" }});
+}}
+
+function renderAll(data) {{
+  const hasSomeData = Object.values(data.checkpoints).some(cp => cp.total > 0);
+  
+  const tabsHtml = `
+    <div class="atr-tabs" style="margin-bottom:28px">
+      <button class="atr-tab ${{currentDays===30?'active':''}}" data-days="30">30 Days</button>
+      <button class="atr-tab ${{currentDays===60?'active':''}}" data-days="60">60 Days</button>
+      <button class="atr-tab ${{currentDays===90?'active':''}}" data-days="90">90 Days</button>
+    </div>`;
+
+  document.getElementById('atr-content').innerHTML =
+    tabsHtml +
+    renderSummaryCards(data) +
+    (hasSomeData ? renderTopPicks(data) : '') +
+    renderByConsensus(data) +
+    renderBySector(data);
+
+  // Bind tabs
+  document.querySelectorAll('.atr-tab').forEach(btn => {{
+    btn.addEventListener('click', () => {{
+      currentDays = parseInt(btn.dataset.days);
+      renderAll(data);
+    }});
+  }});
+}}
+
+fetch('/api/accuracy')
+  .then(r => r.json())
+  .then(data => renderAll(data))
+  .catch(() => {{
+    document.getElementById('atr-content').innerHTML =
+      '<div class="no-data-card"><div class="no-data-title">Failed to load data</div></div>';
+  }});
+</script>
+</body>
+</html>"""
 
 def render_changes_page(mode: str) -> str:
     titles = {
@@ -1504,9 +1858,8 @@ def stock_page(ticker):
 
 @app.route("/stocks")
 def stocks_index():
-    stocks = get_stocks_cached()
-    html   = render_stocks_index(stocks)
-    return Response(html, mimetype="text/html")
+    # Just return the main index.html — let the frontend handle tier/filtering
+    return send_from_directory(PUBLIC_DIR, "index.html")
 
 @app.route("/accuracy")
 def accuracy_page():
@@ -2241,6 +2594,10 @@ def downgraded_page():
 @app.route("/changes")
 def changes_page():
     return Response(render_changes_page("both"), mimetype="text/html")
+
+@app.route("/analyst-track-record")
+def analyst_track_record_page():
+    return Response(render_analyst_track_record(), mimetype="text/html")
 
 @app.route("/api/changes")
 @limiter.limit("600 per hour")
