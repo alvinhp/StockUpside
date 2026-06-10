@@ -898,12 +898,12 @@ function renderSummaryCards(data) {{
       <div class="no-data-icon">⏳</div>
       <div class="no-data-title">Building accuracy data...</div>
       <div class="no-data-sub">
-        We need {currentDays} days of price history to measure analyst accuracy
+        We need 30 days of price history to measure analyst accuracy
         at this interval. Data collection started on
         <strong>${{data.collection_started}}</strong>.
       </div>
       <div class="no-data-date">
-        Check back after ${{getCheckDate(data.collection_started, currentDays)}}
+        Check back after ${{getCheckDate(data.collection_started, 30)}}
       </div>
     </div>`;
 
