@@ -3263,7 +3263,6 @@ def static_files(path):
     return send_from_directory(PUBLIC_DIR, "index.html")
 
 # ── Main ───────────────────────────────────────────────────────────────────────
-#threading.Thread(target=nightly_refresh, daemon=True).start()
 if __name__ == "__main__":
     init_db()
     threading.Thread(target=nightly_refresh, daemon=True).start()

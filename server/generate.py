@@ -260,7 +260,7 @@ def generate_stocks() -> list:
         tickers = UNIVERSE_FALLBACK
 
     # ── Uncomment ONE of the lines below to control scope ──
-    tickers = tickers[:2000]
+    # tickers = tickers[:2000]
     # tickers = tickers[:500]   # dev: ~30-60 min
     # tickers = tickers[:100]   # dev: ~5-10 min
     # (leave commented for full production run)
@@ -275,7 +275,7 @@ def generate_stocks() -> list:
             print(f"  →  Progress: {i}/{total} ({len(rows)} valid so far)")
 
         # 2 seconds per ticker keeps us safely under Yahoo's ~2000 req/hr limit
-        time.sleep(2 + random.uniform(0, 0.5))
+        time.sleep(0.5 + random.uniform(0.5, 2.0))
 
         retries = 3
         info = None
@@ -316,7 +316,7 @@ def generate_stocks() -> list:
                 continue
 
             upside_pct = round((target_price / current_price - 1) * 100, 1)
-            if upside_pct < 0 or upside_pct > 2000:
+            if upside_pct < 0:
                 continue
 
             high_target = info.get("targetHighPrice") or 0
