@@ -836,28 +836,52 @@ select, input { font-family: var(--font-sans); }
 }
 
 @media (max-width: 768px) {
+  /* Hide desktop table entirely on mobile */
+  .tbl-wrap {
+    overflow-x: visible !important;
+    height: auto !important;
+  }
+  
+  .tbl {
+    min-width: 100% !important;
+    display: block !important;
+  }
+
+  .tbl thead {
+    display: none !important;
+  }
+
+  .tbl tbody {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 10px !important;
+    padding: 10px 14px !important;
+  }
+
   /* Hide desktop table columns on mobile */
   .tbl tbody tr:not(.tr-mobile) {
-    display: none;
+    display: none !important;
   }
   
   .tr-mobile {
-    display: table-row;
+    display: table-row !important;
   }
   
   .tr-mobile td {
     padding: 0 !important;
     border: none !important;
+    width: 100% !important;
   }
 
   .mobile-card {
     background: var(--bg2);
     border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 16px;
-    margin-bottom: 12px;
+    padding: 14px;
+    margin: 0 !important;
     cursor: pointer;
     transition: background 0.15s;
+    width: 100%;
   }
 
   .mobile-card:active {
@@ -866,48 +890,53 @@ select, input { font-family: var(--font-sans); }
 
   .mc-header {
     margin-bottom: 12px;
-    padding-bottom: 8px;
+    padding-bottom: 10px;
     border-bottom: 1px solid var(--border);
   }
 
   .mc-ticker {
     font-family: var(--font-mono);
-    font-size: 18px;
+    font-size: 16px;
     font-weight: 700;
     color: var(--accent);
-    margin-bottom: 4px;
+    margin-bottom: 2px;
+    letter-spacing: .04em;
   }
 
   .mc-name {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text2);
+    word-break: break-word;
   }
 
   .mc-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 12px;
+    gap: 12px 10px;
   }
 
   .mc-stat {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 3px;
+    min-width: 0;
   }
 
   .mc-label {
     font-family: var(--font-mono);
-    font-size: 9px;
+    font-size: 8px;
     color: var(--text3);
-    letter-spacing: 0.05em;
+    letter-spacing: 0.06em;
     text-transform: uppercase;
+    font-weight: 600;
   }
 
   .mc-value {
     font-family: var(--font-mono);
-    font-size: 13px;
-    font-weight: 600;
+    font-size: 12px;
+    font-weight: 700;
     color: var(--text);
+    word-break: break-word;
   }
 
   .mc-value.pos {
