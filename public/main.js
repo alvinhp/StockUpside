@@ -225,7 +225,7 @@ function header() {
 }
 function banner() {
     return `<div class="banner">
-    <div class="banner-l">🔒 <strong>Viewing 10 of 100 stocks.</strong>
+    <div class="banner-l">🔒 <strong>Viewing 10 of 1000+ stocks.</strong>
       Upgrade to reveal all analyst picks ranked by upside.</div>
     <button class="btn-upg" id="btn-banner">Upgrade — $29/mo →</button>
   </div>`;
@@ -478,7 +478,7 @@ function paywallModal() {
       <div class="pw-head">
         <div class="pw-mark">▲</div>
         <h2>Unlock Full Access</h2>
-        <p>All 100 analyst-ranked stocks, updated every day at midnight.</p>
+        <p>All analyst-ranked stocks, updated every day at midnight.</p>
       </div>
       <div class="plans">
         <div class="plan featured">
@@ -486,16 +486,14 @@ function paywallModal() {
           <div class="plan-name">Pro Monthly</div>
           <div class="plan-price">$29<span>/mo</span></div>
           <ul>
-            <li>✓ Full top-100 ranked list</li>
-            <li>✓ Consensus breakdown per stock</li>
-            <li>✓ Bull / bear price target range</li>
-            <li>✓ Sector + consensus filters</li>
-            <li>✓ Daily data refresh</li>
-            <li>✓ CSV export</li>
+            <li>✓ Full top 5000+ ranked list</li>
+            <li>✓ Everything in free tier</li>
+            <li>✓ Priority support</li>
+            <li>✓ CSV export (Coming soon)</li>
           </ul>
           <input type="email" id="pw-email" class="pw-email" placeholder="your@email.com" />
           <button class="btn-sub" id="pw-sub">Get Pro Access →</button>
-          <div class="pw-demo">💡 Demo mode — no real payment taken</div>
+          
         </div>
         <div class="plan">
           <div class="plan-name">Pro Annual</div>
@@ -504,8 +502,7 @@ function paywallModal() {
           <ul>
             <li>✓ Everything in Monthly</li>
             <li>✓ 90-day historical data</li>
-            <li>✓ Email alerts</li>
-            <li>✓ REST API access</li>
+            <li>✓ REST API access (Coming soon)</li>
           </ul>
           <button class="btn-sub btn-sub-sec" id="pw-ann">Get Annual →</button>
         </div>
