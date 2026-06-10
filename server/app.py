@@ -911,7 +911,7 @@ function renderSummaryCards(data) {{
   return `
     <div class="atr-cards">
       <div class="atr-card">
-        <div class="atr-card-lbl">HIT RATE ({currentDays}D)</div>
+        <div class="atr-card-lbl">HIT RATE ({30}D)</div>
         <div class="atr-card-val" style="color:${{col}}">${{cp.hit_rate}}%</div>
         <div class="atr-card-sub">of targets reached</div>
       </div>
