@@ -260,7 +260,7 @@ def generate_stocks() -> list:
         tickers = UNIVERSE_FALLBACK
 
     # ── Uncomment ONE of the lines below to control scope ──
-    # tickers = tickers[:2000]
+    tickers = tickers[:4000]
     # tickers = tickers[:500]   # dev: ~30-60 min
     # tickers = tickers[:100]   # dev: ~5-10 min
     # (leave commented for full production run)

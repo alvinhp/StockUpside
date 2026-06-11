@@ -20,6 +20,7 @@ import threading
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PUBLIC_DIR = os.path.join(BASE_DIR, "public")
 DB_PATH    = os.path.join(BASE_DIR, "server", "cache.db")
+LOG_PATH   = os.path.join(BASE_DIR, "server", "generate.log")
 
 app = Flask(__name__, static_folder=PUBLIC_DIR, static_url_path="")
 limiter = Limiter(get_remote_address, app=app, default_limits=["200 per hour"])
@@ -28,6 +29,12 @@ limiter = Limiter(get_remote_address, app=app, default_limits=["200 per hour"])
 _cache_lock: threading.Lock = threading.Lock()
 _cache: dict = {"data": None, "date": None}
 
+def invalidate_memory_cache():
+    """Clear the in-memory stock cache so the next request re-reads from DB."""
+    with _cache_lock:
+        _cache["data"] = None
+        _cache["date"] = None
+
 
 def nightly_refresh():
     """
@@ -35,8 +42,20 @@ def nightly_refresh():
     generate.py as a subprocess so the Flask process is never blocked.
     generate.py writes directly to the SQLite DB; once it exits we
     invalidate the in-memory cache so the next request picks up fresh data.
+    All output — including errors — is written to server/generate.log.
     """
     import subprocess, sys
+
+    def log(msg: str):
+        ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        line = f"[{ts}] {msg}"
+        print(line, flush=True)
+        try:
+            with open(LOG_PATH, "a") as f:
+                f.write(line + "\n")
+        except Exception:
+            pass
+
     generate_script = os.path.join(BASE_DIR, "server", "generate.py")
 
     while True:
@@ -46,29 +65,32 @@ def nightly_refresh():
             target += datetime.timedelta(days=1)
 
         sleep_secs = (target - datetime.datetime.now()).total_seconds()
-        print(f"  →  Next refresh at {target.strftime('%Y-%m-%d %H:%M')} ({sleep_secs/3600:.1f}h)")
+        log(f"Next refresh at {target.strftime('%Y-%m-%d %H:%M')} ({sleep_secs/3600:.1f}h away)")
 
-        # Sleep in short chunks so machine wakeup doesn't cause a long skip
         while (target - datetime.datetime.now()).total_seconds() > 0:
             time.sleep(min(60, max(0, (target - datetime.datetime.now()).total_seconds())))
 
-        print("  →  Launching generate.py as offline job...")
+        log("Launching generate.py...")
         set_generating(True)
         try:
-            result = subprocess.run(
-                [sys.executable, generate_script],
-                timeout=4 * 3600,   # 4-hour hard cap
-                capture_output=False,
-            )
+            with open(LOG_PATH, "a") as logfile:
+                result = subprocess.run(
+                    [sys.executable, generate_script],
+                    timeout=4 * 3600,
+                    stdout=logfile,
+                    stderr=logfile,
+                )
             if result.returncode == 0:
                 invalidate_memory_cache()
-                print("  ✓  Nightly refresh complete — cache invalidated.")
+                log(f"Nightly refresh complete — cache invalidated (exit 0).")
             else:
-                print(f"  ⚠  generate.py exited with code {result.returncode}")
+                log(f"generate.py exited with code {result.returncode} — check {LOG_PATH}")
         except subprocess.TimeoutExpired:
-            print("  ⚠  generate.py timed out after 4 hours")
+            log("generate.py timed out after 4 hours — killing process.")
+        except FileNotFoundError:
+            log(f"generate.py not found at {generate_script} — check path.")
         except Exception as e:
-            print(f"  ⚠  Nightly refresh failed: {e}")
+            log(f"Nightly refresh failed with unexpected error: {e}")
         finally:
             set_generating(False)
 
@@ -717,27 +739,30 @@ def get_db() -> sqlite3.Connection:
 def get_stocks_cached() -> list:
     today = datetime.date.today().isoformat()
 
-    # 1. Fast path: in-memory cache is fresh
+    # 1. Fast path: in-memory cache is fresh for today
     with _cache_lock:
         if _cache["date"] == today and _cache["data"]:
             return _cache["data"]
 
     # 2. Try today's data from DB
     data = get_cached()
+    data_date = today
 
     # 3. If no data for today, serve the most recent available snapshot
     #    (covers: first boot, mid-refresh, or generate.py hasn't run yet today)
     if not data:
-        data = get_any_cached()
+        data, data_date = get_any_cached_with_date()
 
     # 4. Still nothing — DB is empty (generate.py has never run)
     if not data:
         return []
 
-    # Warm the in-memory cache
+    # Warm the in-memory cache using the data's actual date, not today.
+    # This ensures tomorrow's request re-checks the DB for a fresh row
+    # rather than serving this stale data indefinitely.
     with _cache_lock:
         _cache["data"] = data
-        _cache["date"] = today
+        _cache["date"] = data_date
 
     return data
 
@@ -750,6 +775,19 @@ def get_any_cached():
     ).fetchone()
     con.close()
     return json.loads(row[0]) if row else None
+
+def get_any_cached_with_date():
+    """Like get_any_cached() but also returns the row's date so the
+    in-memory cache can be keyed to the data's actual date rather than
+    today — preventing stale data from being served indefinitely."""
+    con = get_db()
+    row = con.execute(
+        "SELECT data, date FROM cache ORDER BY ts DESC LIMIT 1"
+    ).fetchone()
+    con.close()
+    if row:
+        return json.loads(row[0]), row[1]
+    return None, None
 
 def render_analyst_track_record() -> str:
     yr = datetime.date.today().year
@@ -1596,42 +1634,6 @@ def api_stats():
 import stripe
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "")
 
-@app.route("/api/get-token", methods=["POST", "OPTIONS"])
-@limiter.limit("5 per hour")
-def api_get_token():
-    """Allow a known pro subscriber to retrieve their access token by email.
-    Used for manual/test accounts inserted directly into the DB without going
-    through Stripe checkout, and as a 'forgot token' recovery flow.
-    """
-    if request.method == "OPTIONS":
-        return Response(status=200)
-    body  = request.get_json(force=True) or {}
-    email = body.get("email", "").strip().lower()
-    if not email or "@" not in email:
-        return jsonify({"error": "Invalid email"}), 400
-
-    con = get_db()
-    row = con.execute(
-        "SELECT email, stripe_id, plan FROM subscribers WHERE email=?", (email,)
-    ).fetchone()
-    con.close()
-
-    if not row:
-        return jsonify({"error": "Email not found"}), 404
-
-    sub_email, stripe_id, plan = row
-    if plan != "pro":
-        return jsonify({"error": "Not a Pro subscriber"}), 403
-
-    # Generate the same token formula used in /success
-    stripe_key = os.environ.get("STRIPE_SECRET_KEY", "")
-    sid = stripe_id or ""
-    token = hashlib.sha256(
-        f"{sub_email}:{sid}:{stripe_key}".encode()
-    ).hexdigest()[:32]
-
-    return jsonify({"token": token, "redirect": f"/?pro_token={token}&welcome=1"})
-
 @app.route("/api/subscribe", methods=["POST", "OPTIONS"])
 @limiter.limit("10 per hour")
 def api_subscribe():
@@ -1860,16 +1862,20 @@ def api_refresh():
     def _run():
         set_generating(True)
         try:
-            result = subprocess.run(
-                [sys.executable, generate_script],
-                timeout=4 * 3600,
-                capture_output=False,
-            )
+            with open(LOG_PATH, "a") as logfile:
+                ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                logfile.write(f"[{ts}] Manual refresh triggered via /api/refresh\n")
+                result = subprocess.run(
+                    [sys.executable, generate_script],
+                    timeout=4 * 3600,
+                    stdout=logfile,
+                    stderr=logfile,
+                )
             if result.returncode == 0:
                 invalidate_memory_cache()
-                print("  ✓  Manual refresh complete.")
+                print("  ✓  Manual refresh complete — cache invalidated.")
             else:
-                print(f"  ⚠  generate.py exited with code {result.returncode}")
+                print(f"  ⚠  generate.py exited with code {result.returncode} — check {LOG_PATH}")
         except Exception as e:
             print(f"  ⚠  Manual refresh failed: {e}")
         finally:
