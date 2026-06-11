@@ -298,7 +298,7 @@ select, input { font-family: var(--font-sans); }
 .tr-locked:hover { background:var(--bg3);opacity:.9; }
 
 .tbl td {
-  padding:10px 14px;
+  padding:7px 12px;
   border-bottom:1px solid var(--border);
   border-right:1px solid var(--border);
   white-space:nowrap; vertical-align:middle;
@@ -1107,4 +1107,85 @@ select, input { font-family: var(--font-sans); }
 @media (max-width: 768px) {
   .flts { gap: 8px; }
   .flt-g { min-width: 120px; }
+}
+
+/* ── Log In button in header ─────────────────────────────── */
+.btn-login {
+  padding: 6px 14px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text2);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all .15s;
+  white-space: nowrap;
+}
+.btn-login:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ── Mobile nav tabs (Rating Changes, Accuracy, etc.) ───── */
+.mobile-nav-tabs {
+  display: none;
+}
+@media (max-width: 768px) {
+  .mobile-nav-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+  }
+  .mob-tab {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: .04em;
+    color: var(--text2);
+    background: var(--bg2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 6px 12px;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: all .15s;
+  }
+  .mob-tab:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* Hide the footer nav duplication on mobile */
+  .ftr-mobile-nav { display: none !important; }
+}
+
+/* ── Mobile: sbar-mobile shows only Last Updated ─────────── */
+.sbar-mobile-only {
+  /* single card full width */
+}
+@media (max-width: 768px) {
+  .sbar-mobile .sbar-mobile-only {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    padding: 8px 12px;
+  }
+  .sbar-mobile .sbar-mobile-only .scard {
+    border: none;
+    padding: 0;
+  }
+}
+
+/* ── UPSIDE % label above the value in mobile card ──────── */
+.mc-upside-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  flex-shrink: 0;
+}
+.mc-upside-lbl {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: .07em;
+  color: var(--text3);
+  margin-bottom: 2px;
 }

@@ -16,6 +16,7 @@ let conFilter = "All";
 let minAnalysts = 0;
 let maxPE = 0; // 0 = no filter
 let maxPEG = 0; // 0 = no filter
+let momentumFilter = "All"; // All | up | down | neutral
 let query = "";
 let detail = null;
 let tickTimer = null;
@@ -157,6 +158,8 @@ function applyFilters() {
         s = s.filter(x => x.locked || (x.pe_ratio > 0 && x.pe_ratio <= maxPE));
     if (maxPEG > 0)
         s = s.filter(x => x.locked || (x.peg_ratio > 0 && x.peg_ratio <= maxPEG));
+    if (momentumFilter !== "All")
+        s = s.filter(x => x.locked || x.momentum_trend === momentumFilter);
     const locked = s.filter(x => x.locked), free = s.filter(x => !x.locked);
     free.sort((a, b) => {
         const av = a[sortKey] ?? 0, bv = b[sortKey] ?? 0;
@@ -198,7 +201,8 @@ function renderAll() {
     ${stats?.generating ? generatingBanner() : ""}
     <div class="sbar-desktop">${statsBar()}</div>
     ${controls(sectors, countShow)}
-    <div class="sbar-mobile">${statsBar()}</div>
+    <div class="sbar-mobile">${statsBarMobile()}</div>
+    <div class="mobile-nav-tabs">${mobileNavTabs()}</div>
     <div class="tbl-wrap">${table()}</div>
     <div id="pgn-container">${pagination()}</div>
     ${momentumNote()}
@@ -230,7 +234,7 @@ function header() {
       </div>
       ${tier === "pro"
         ? `<div class="pro-chip">✦ PRO</div>`
-        : `<button class="btn-pro" id="btn-paywall">Unlock Pro →</button>`}
+        : `<button class="btn-login" id="btn-login">Log In</button><button class="btn-pro" id="btn-paywall">Unlock Pro →</button>`}
     </div>
   </header>`;
 }
@@ -279,7 +283,7 @@ function emailBar() {
     return `<div class="email-bar" id="email-bar">
         <div class="email-bar-l">
             📬 <strong>Get the top 10 picks in your inbox every week.</strong>
-            Free. No credit card required.
+            Free — no credit card required.
         </div>
         <div class="email-bar-r">
             <input type="email" id="free-email-input" class="free-email-input"
@@ -287,6 +291,23 @@ function emailBar() {
             <button class="btn-free-sub" id="free-email-btn">Notify Me →</button>
         </div>
     </div>`;
+}
+function statsBarMobile() {
+    if (!stats)
+        return "";
+    const freshnessColor = stats.freshness === "fresh" ? "var(--green-b)"
+        : stats.freshness === "aging" ? "var(--amber)"
+            : "var(--red)";
+    const freshnessLabel = stats.freshness === "fresh" ? "● Live"
+        : stats.freshness === "aging" ? "● 1 day old"
+            : `● ${stats.days_old}d old`;
+    return `<div class="sbar sbar-mobile-only">
+    <div class="scard">
+      <div class="sc-lbl">LAST UPDATED</div>
+      <div class="sc-val">${stats.last_updated}</div>
+      <div class="sc-fresh" style="color:${freshnessColor}">${freshnessLabel}</div>
+    </div>
+  </div>`;
 }
 function controls(sectors, count) {
     const cons = ["All", "Strong Buy", "Buy", "Hold", "Underperform"];
@@ -335,6 +356,14 @@ function controls(sectors, count) {
           <option value="1"${maxPEG === 1 ? " selected" : ""}>≤1.0</option>
           <option value="1.5"${maxPEG === 1.5 ? " selected" : ""}>≤1.5</option>
           <option value="2"${maxPEG === 2 ? " selected" : ""}>≤2.0</option>
+        </select>
+      </div>
+      <div class="flt-g"><label class="flt-lbl">MOMENTUM</label>
+        <select class="flt-sel" id="flt-momentum">
+          <option value="All"${momentumFilter === "All" ? " selected" : ""}>Any</option>
+          <option value="up"${momentumFilter === "up" ? " selected" : ""}>↑ Improving</option>
+          <option value="neutral"${momentumFilter === "neutral" ? " selected" : ""}>→ Neutral</option>
+          <option value="down"${momentumFilter === "down" ? " selected" : ""}>↓ Weakening</option>
         </select>
       </div>
       <div class="res-cnt">Showing <strong id="cnt">${count}</strong> stocks</div>
@@ -493,7 +522,10 @@ function row(s) {
                 <div class="mc-ticker">${s.ticker}</div>
                 <div class="mc-name">${s.name}</div>
               </div>
-              <div class="mc-upside-hero ${uClass(s.upside_pct)}">${pct(s.upside_pct)}</div>
+              <div class="mc-upside-wrap">
+                <div class="mc-upside-lbl">UPSIDE %</div>
+                <div class="mc-upside-hero ${uClass(s.upside_pct)}">${pct(s.upside_pct)}</div>
+              </div>
             </div>
           </div>
           <div class="mc-grid">
@@ -518,8 +550,8 @@ function row(s) {
               <span class="mc-value ${ytdCls}">${pct(s.ytd_change)}</span>
             </div>
             <div class="mc-stat">
-              <span class="mc-label">Sector</span>
-              <span class="mc-value">${s.sector}</span>
+              <span class="mc-label">Momentum</span>
+              <span class="mc-value">${s.momentum_trend === "up" ? "↑ Improving" : s.momentum_trend === "down" ? "↓ Weakening" : "→ Neutral"}</span>
             </div>
           </div>
         </div>
@@ -543,6 +575,13 @@ function renderRows() {
     // Re-bind row clicks
     bindRows();
     bindPagination();
+}
+function mobileNavTabs() {
+    return `
+    <a href="/changes" class="mob-tab">Rating Changes</a>
+    <a href="/accuracy" class="mob-tab">Accuracy</a>
+    <a href="/analyst-track-record" class="mob-tab">Track Record</a>
+    <a href="/stocks" class="mob-tab">All Stocks</a>`;
 }
 function footer() {
     return `<footer class="ftr">
@@ -882,6 +921,39 @@ function bindGlobals() {
     const fPEG = document.getElementById("flt-peg");
     if (fPEG)
         fPEG.onchange = () => { maxPEG = parseFloat(fPEG.value); currentPage = 1; applyFilters(); renderRows(); };
+    // Momentum filter
+    const fMom = document.getElementById("flt-momentum");
+    if (fMom)
+        fMom.onchange = () => { momentumFilter = fMom.value; currentPage = 1; applyFilters(); renderRows(); };
+    // Log In button
+    const btnLogin = document.getElementById("btn-login");
+    if (btnLogin)
+        btnLogin.onclick = async () => {
+            const email = prompt("Enter your Pro subscriber email:");
+            if (!email || !email.includes("@"))
+                return;
+            btnLogin.textContent = "Checking…";
+            try {
+                const r = await fetch(API + "/get-token", {
+                    method: "POST", headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ email })
+                });
+                const d = await r.json();
+                if (d.token) {
+                    proToken = d.token;
+                    localStorage.setItem("su_token", proToken);
+                    window.location.href = d.redirect;
+                }
+                else {
+                    toast(d.error || "Email not found. Check you used the address you subscribed with.", "err");
+                    btnLogin.textContent = "Log In";
+                }
+            }
+            catch {
+                toast("Could not connect", "err");
+                btnLogin.textContent = "Log In";
+            }
+        };
     // Row clicks
     bindRows();
     // Pagination

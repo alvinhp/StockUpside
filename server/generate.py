@@ -260,7 +260,7 @@ def generate_stocks() -> list:
         tickers = UNIVERSE_FALLBACK
 
     # ── Uncomment ONE of the lines below to control scope ──
-    tickers = tickers[:4000]
+    # tickers = tickers[:2000]
     # tickers = tickers[:500]   # dev: ~30-60 min
     # tickers = tickers[:100]   # dev: ~5-10 min
     # (leave commented for full production run)
@@ -356,8 +356,19 @@ def generate_stocks() -> list:
                 "strong_buy": "Strong Buy", "buy": "Buy", "hold": "Hold",
                 "underperform": "Underperform", "sell": "Sell", "none": "Hold",
             }
-            consensus = consensus_map.get(
-                (info.get("recommendationKey") or "none").lower(), "Hold")
+            # Prefer deriving consensus from actual vote counts so it matches
+            # what users see in the analyst breakdown bars. Yahoo's
+            # recommendationKey can disagree with the individual counts.
+            total_votes = sb + b + h + s
+            if total_votes > 0:
+                score = (sb * 1 + b * 2 + h * 3 + s * 4) / total_votes
+                if   score <= 1.5: consensus = "Strong Buy"
+                elif score <= 2.5: consensus = "Buy"
+                elif score <= 3.2: consensus = "Hold"
+                else:              consensus = "Underperform"
+            else:
+                consensus = consensus_map.get(
+                    (info.get("recommendationKey") or "none").lower(), "Hold")
 
             momentum = get_momentum(ticker, consensus, analyst_count)
 
