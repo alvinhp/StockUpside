@@ -16,7 +16,6 @@ interface Stock {
   momentum_trend: "up" | "down" | "neutral";
   momentum_detail: string;
   momentum_streak: number;
-  pe_ratio: number;
   peg_ratio: number;
   forward_pe: number;
 }
