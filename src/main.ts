@@ -16,6 +16,9 @@ interface Stock {
   momentum_trend: "up" | "down" | "neutral";
   momentum_detail: string;
   momentum_streak: number;
+  pe_ratio: number;
+  peg_ratio: number;
+  forward_pe: number;
 }
 interface ApiResp  { stocks: Stock[]; total: number; tier: string; last_updated: string; next_update: string; }
 interface StatsResp { total_stocks: number; avg_upside: number; top_upside: number;
@@ -37,9 +40,13 @@ let sortAsc   = true;
 let secFilter    = "All";
 let conFilter    = "All";
 let minAnalysts  = 0;
+let maxPE        = 0;   // 0 = no filter
+let maxPEG       = 0;   // 0 = no filter
 let query     = "";
 let detail:   Stock | null = null;
 let tickTimer: ReturnType<typeof setInterval> | null = null;
+let currentPage  = 1;
+const PAGE_SIZE  = 100;
 
 // ── Format helpers ─────────────────────────────────────────────────────────────
 const f2   = (n: number) => n.toFixed(2);
@@ -153,6 +160,8 @@ function applyFilters() {
   if (secFilter !== "All") s = s.filter(x => x.locked || x.sector === secFilter);
   if (conFilter !== "All") s = s.filter(x => x.locked || x.consensus === conFilter);
   if (minAnalysts > 0)    s = s.filter(x => x.locked || x.analyst_count >= minAnalysts);
+  if (maxPE > 0)          s = s.filter(x => x.locked || (x.pe_ratio > 0 && x.pe_ratio <= maxPE));
+  if (maxPEG > 0)         s = s.filter(x => x.locked || (x.peg_ratio > 0 && x.peg_ratio <= maxPEG));
   const locked = s.filter(x => x.locked), free = s.filter(x => !x.locked);
   free.sort((a,b) => {
     const av=(a as any)[sortKey]??0, bv=(b as any)[sortKey]??0;
@@ -164,6 +173,7 @@ function applyFilters() {
 function doSort(key: string) {
   sortAsc = sortKey === key ? !sortAsc : (key === "rank");
   sortKey = key;
+  currentPage = 1;
   applyFilters(); renderRows();
 }
 
@@ -192,9 +202,11 @@ function renderAll() {
     ${tier === "free" ? banner() : ""}
     ${tier === "free" ? emailBar() : ""}
     ${stats?.generating ? generatingBanner() : ""}
-    ${statsBar()}
+    <div class="sbar-desktop">${statsBar()}</div>
     ${controls(sectors, countShow)}
+    <div class="sbar-mobile">${statsBar()}</div>
     <div class="tbl-wrap">${table()}</div>
+    <div id="pgn-container">${pagination()}</div>
     ${momentumNote()}
     ${footer()}
     ${paywallModal()}
@@ -317,6 +329,25 @@ function controls(sectors: string[], count: number) {
           <option value="25"${minAnalysts===25?" selected":""}>25+</option>
         </select>
       </div>
+      <div class="flt-g"><label class="flt-lbl">MAX P/E</label>
+        <select class="flt-sel" id="flt-pe">
+          <option value="0"${maxPE===0?" selected":""}>Any</option>
+          <option value="10"${maxPE===10?" selected":""}>≤10</option>
+          <option value="15"${maxPE===15?" selected":""}>≤15</option>
+          <option value="20"${maxPE===20?" selected":""}>≤20</option>
+          <option value="35"${maxPE===35?" selected":""}>≤35</option>
+          <option value="50"${maxPE===50?" selected":""}>≤50</option>
+        </select>
+      </div>
+      <div class="flt-g"><label class="flt-lbl">MAX PEG</label>
+        <select class="flt-sel" id="flt-peg">
+          <option value="0"${maxPEG===0?" selected":""}>Any</option>
+          <option value="0.5"${maxPEG===0.5?" selected":""}>≤0.5</option>
+          <option value="1"${maxPEG===1?" selected":""}>≤1.0</option>
+          <option value="1.5"${maxPEG===1.5?" selected":""}>≤1.5</option>
+          <option value="2"${maxPEG===2?" selected":""}>≤2.0</option>
+        </select>
+      </div>
       <div class="res-cnt">Showing <strong id="cnt">${count}</strong> stocks</div>
     </div>
   </div>`;
@@ -349,6 +380,40 @@ function table() {
   </table>`;
 }
 
+function pagination(): string {
+  const free = filtered.filter(x => !x.locked);
+  const locked = filtered.filter(x => x.locked);
+  const totalFree = free.length;
+  const totalPages = Math.max(1, Math.ceil((totalFree + locked.length) / PAGE_SIZE));
+  if (totalPages <= 1) return "";
+
+  const prev = currentPage > 1 ? `<button class="pg-btn" id="pg-prev">← Prev</button>` : `<button class="pg-btn pg-dis" disabled>← Prev</button>`;
+  const next = currentPage < totalPages ? `<button class="pg-btn" id="pg-next">Next →</button>` : `<button class="pg-btn pg-dis" disabled>Next →</button>`;
+
+  // Page number buttons (show up to 7 around current)
+  const pages: string[] = [];
+  const range = 3;
+  for (let p = 1; p <= totalPages; p++) {
+    if (p === 1 || p === totalPages || (p >= currentPage - range && p <= currentPage + range)) {
+      pages.push(`<button class="pg-btn${p === currentPage ? " pg-act" : ""}" data-p="${p}">${p}</button>`);
+    } else if (pages[pages.length-1] !== "…") {
+      pages.push("…");
+    }
+  }
+
+  const start = (currentPage - 1) * PAGE_SIZE + 1;
+  const end = Math.min(currentPage * PAGE_SIZE, totalFree + locked.length);
+
+  return `<div class="pgn-wrap">
+    <div class="pgn-info">Showing ${start}–${end} of ${filtered.length} stocks</div>
+    <div class="pgn-btns">
+      ${prev}
+      ${pages.map(p => p === "…" ? `<span class="pg-ellipsis">…</span>` : p).join("")}
+      ${next}
+    </div>
+  </div>`;
+}
+
 function momentumNote(): string {
     const allNeutral = all.length > 0 && all.every(s => !s.locked && s.momentum_trend === "neutral");
     if (!allNeutral) return "";
@@ -379,7 +444,10 @@ function showLockedFeedback(tr: HTMLElement) {
 }
 
 function rows() {
-  return filtered.map(s => row(s)).join("");
+  const start = (currentPage - 1) * PAGE_SIZE;
+  const end = start + PAGE_SIZE;
+  const pageItems = filtered.slice(start, end);
+  return pageItems.map(s => row(s)).join("");
 }
 
 function row(s: Stock): string {
@@ -396,6 +464,21 @@ function row(s: Stock): string {
       <td><span class="con-dim">${s.consensus}</span></td>
       <td class="dim">—</td>
       <td class="dim">—</td>
+    </tr>
+    <tr class="tr-mobile tr-mobile-locked" data-locked="1">
+      <td colspan="11">
+        <div class="mobile-card mobile-card-locked" onclick="showPW()">
+          <div class="mc-top-row">
+            <div class="mc-rank">#${s.rank}</div>
+            <div class="mc-ticker-wrap">
+              <div class="mc-ticker" style="color:var(--text3)">???</div>
+              <div class="mc-name" style="filter:blur(4px);user-select:none">Pro Stock Locked</div>
+            </div>
+            <div class="mc-upside-hero u-lg">${pct(s.upside_pct)}</div>
+          </div>
+          <div class="mc-lock-overlay">🔒 Unlock Pro to reveal</div>
+        </div>
+      </td>
     </tr>`;
 
   const medal = s.rank===1?"🥇":s.rank===2?"🥈":s.rank===3?"🥉":"";
@@ -421,21 +504,27 @@ function row(s: Stock): string {
       <td class="${ytdCls}">${pct(s.ytd_change)}</td>
     </tr>
     <!-- Mobile card view (hidden on desktop) -->
-    <tr class="tr-mobile">
+    <tr class="tr-mobile" data-ticker="${s.ticker}">
       <td colspan="11">
-        <div class="mobile-card">
+        <div class="mobile-card" onclick="window.location.href='/stocks/${s.ticker}'">
           <div class="mc-header">
-            <div class="mc-ticker">${s.ticker}</div>
-            <div class="mc-name">${s.name}</div>
+            <div class="mc-top-row">
+              <div class="mc-rank">#${s.rank}</div>
+              <div class="mc-ticker-wrap">
+                <div class="mc-ticker">${s.ticker}</div>
+                <div class="mc-name">${s.name}</div>
+              </div>
+              <div class="mc-upside-hero ${uClass(s.upside_pct)}">${pct(s.upside_pct)}</div>
+            </div>
           </div>
           <div class="mc-grid">
             <div class="mc-stat">
-              <span class="mc-label">Analyst Upside</span>
-              <span class="mc-value pos">${pct(s.upside_pct)}</span>
+              <span class="mc-label">Price</span>
+              <span class="mc-value">${price(s.current_price)}</span>
             </div>
             <div class="mc-stat">
-              <span class="mc-label">YTD Change</span>
-              <span class="mc-value ${ytdCls}">${pct(s.ytd_change)}</span>
+              <span class="mc-label">Target</span>
+              <span class="mc-value pos">${price(s.target_price)}</span>
             </div>
             <div class="mc-stat">
               <span class="mc-label">Consensus</span>
@@ -446,8 +535,8 @@ function row(s: Stock): string {
               <span class="mc-value">${s.analyst_count}</span>
             </div>
             <div class="mc-stat">
-              <span class="mc-label">Momentum</span>
-              <span class="mc-value">${s.momentum_trend === "up" ? "↑ Improving" : s.momentum_trend === "down" ? "↓ Weakening" : "→ Neutral"}</span>
+              <span class="mc-label">YTD</span>
+              <span class="mc-value ${ytdCls}">${pct(s.ytd_change)}</span>
             </div>
             <div class="mc-stat">
               <span class="mc-label">Sector</span>
@@ -465,8 +554,12 @@ function renderRows() {
   tb.innerHTML = rows();
   const cnt = document.getElementById("cnt");
   if (cnt) cnt.textContent = String(filtered.filter(x=>!x.locked).length);
+  // Re-render pagination
+  const pgnEl = document.getElementById("pgn-container");
+  if (pgnEl) pgnEl.innerHTML = pagination();
   // Re-bind row clicks
   bindRows();
+  bindPagination();
 }
 
 function footer() {
@@ -524,6 +617,9 @@ function paywallModal() {
         </div>
       </div>
       <div class="pw-foot">🔒 Stripe · Cancel anytime · 7-day money-back</div>
+      <div class="pw-recover">
+        Already a Pro subscriber? <button class="pw-recover-btn" id="pw-recover-btn">Restore access →</button>
+      </div>
     </div>
   </div>`;
 }
@@ -604,18 +700,21 @@ function toast(msg: string, type: "ok"|"err") {
 }
 function fixStickyOffset() {
   requestAnimationFrame(() => {
+    // On mobile, the table scrolls with the page — no fixed height needed
+    if (window.innerWidth <= 768) {
+      const wrap = document.querySelector(".tbl-wrap") as HTMLElement;
+      if (wrap) { wrap.style.height = "auto"; wrap.style.overflowX = "visible"; }
+      return;
+    }
     let offset = 0;
     const hdr  = document.querySelector(".hdr") as HTMLElement;
     const ban  = document.querySelector(".banner") as HTMLElement;
-    const sbar = document.querySelector(".sbar") as HTMLElement;
+    const sbar = document.querySelector(".sbar-desktop .sbar") as HTMLElement;
     const ctrl = document.querySelector(".ctrl") as HTMLElement;
     
     if (hdr)  offset += hdr.offsetHeight;
     if (ban)  offset += ban.offsetHeight;
-    // Don't add sbar height on mobile — it's hidden
-    if (sbar && window.innerWidth > 768) {
-      offset += sbar.offsetHeight;
-    }
+    if (sbar) offset += sbar.offsetHeight;
 
     if (ctrl) {
       ctrl.style.top = `${offset}px`;
@@ -624,8 +723,7 @@ function fixStickyOffset() {
 
     const wrap = document.querySelector(".tbl-wrap") as HTMLElement;
     if (wrap) {
-      // Add a bit of padding to prevent scrolling past the footer
-      const footerHeight = 60; // approximate
+      const footerHeight = 60;
       wrap.style.height = `calc(100vh - ${offset}px - ${footerHeight}px)`;
     }
 
@@ -643,6 +741,23 @@ function startTicker() {
 }
 
 // ── Event binding ──────────────────────────────────────────────────────────────
+function bindPagination() {
+  document.getElementById("pg-prev")?.addEventListener("click", () => {
+    if (currentPage > 1) { currentPage--; renderRows(); window.scrollTo({top: 0, behavior: "smooth"}); }
+  });
+  document.getElementById("pg-next")?.addEventListener("click", () => {
+    const totalPages = Math.ceil(filtered.length / PAGE_SIZE);
+    if (currentPage < totalPages) { currentPage++; renderRows(); window.scrollTo({top: 0, behavior: "smooth"}); }
+  });
+  document.querySelectorAll<HTMLElement>(".pg-btn[data-p]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      currentPage = parseInt(btn.dataset.p!);
+      renderRows();
+      window.scrollTo({top: 0, behavior: "smooth"});
+    });
+  });
+}
+
 function bindRows() {
   document.querySelectorAll<HTMLElement>(".tr-stock").forEach(tr => {
     tr.onclick = (e) => {
@@ -664,6 +779,32 @@ function bindRows() {
 }
 
 function bindGlobals() {
+  // Pro token recovery
+  const recoverBtn = document.getElementById("pw-recover-btn");
+  if (recoverBtn) recoverBtn.onclick = async () => {
+    const email = prompt("Enter your Pro subscriber email:");
+    if (!email || !email.includes("@")) return;
+    recoverBtn.textContent = "Looking up…";
+    try {
+      const r = await fetch(API + "/get-token", {
+        method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({email})
+      });
+      const d = await r.json();
+      if (d.token) {
+        proToken = d.token;
+        localStorage.setItem("su_token", proToken);
+        window.location.href = d.redirect;
+      } else {
+        toast(d.error || "Email not found", "err");
+        recoverBtn.textContent = "Restore access →";
+      }
+    } catch {
+      toast("Could not connect", "err");
+      recoverBtn.textContent = "Restore access →";
+    }
+  };
+
   // Paywall buttons
   const bPW = document.getElementById("btn-paywall");
   if (bPW) bPW.onclick = showPW;
@@ -708,24 +849,35 @@ if (subBtn) subBtn.onclick = async () => {
 
   // Search
   const srch = document.getElementById("srch") as HTMLInputElement;
-  if (srch) srch.oninput = () => { query = srch.value; applyFilters(); renderRows(); };
+  if (srch) srch.oninput = () => { query = srch.value; currentPage=1; applyFilters(); renderRows(); };
   const srchClr = document.getElementById("srch-clr");
-  if (srchClr) srchClr.onclick = () => { query=""; if(srch) srch.value=""; applyFilters(); renderAll(); };
+  if (srchClr) srchClr.onclick = () => { query=""; currentPage=1; if(srch) srch.value=""; applyFilters(); renderAll(); };
 
   // Sector filter
   const fSec = document.getElementById("flt-sec") as HTMLSelectElement;
-  if (fSec) fSec.onchange = () => { secFilter=fSec.value; applyFilters(); renderRows(); };
+  if (fSec) fSec.onchange = () => { secFilter=fSec.value; currentPage=1; applyFilters(); renderRows(); };
 
   // Consensus filter
   const fCon = document.getElementById("flt-con") as HTMLSelectElement;
-  if (fCon) fCon.onchange = () => { conFilter=fCon.value; applyFilters(); renderRows(); };
+  if (fCon) fCon.onchange = () => { conFilter=fCon.value; currentPage=1; applyFilters(); renderRows(); };
 
   // Analyst count filter
   const fAnalysts = document.getElementById("flt-analysts") as HTMLSelectElement;
-  if (fAnalysts) fAnalysts.onchange = () => { minAnalysts=parseInt(fAnalysts.value); applyFilters(); renderRows(); };
+  if (fAnalysts) fAnalysts.onchange = () => { minAnalysts=parseInt(fAnalysts.value); currentPage=1; applyFilters(); renderRows(); };
+
+  // P/E filter
+  const fPE = document.getElementById("flt-pe") as HTMLSelectElement;
+  if (fPE) fPE.onchange = () => { maxPE=parseFloat(fPE.value); currentPage=1; applyFilters(); renderRows(); };
+
+  // PEG filter
+  const fPEG = document.getElementById("flt-peg") as HTMLSelectElement;
+  if (fPEG) fPEG.onchange = () => { maxPEG=parseFloat(fPEG.value); currentPage=1; applyFilters(); renderRows(); };
 
   // Row clicks
   bindRows();
+
+  // Pagination
+  bindPagination();
 
   // Ticker
   startTicker();

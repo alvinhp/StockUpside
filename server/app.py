@@ -1596,6 +1596,42 @@ def api_stats():
 import stripe
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "")
 
+@app.route("/api/get-token", methods=["POST", "OPTIONS"])
+@limiter.limit("5 per hour")
+def api_get_token():
+    """Allow a known pro subscriber to retrieve their access token by email.
+    Used for manual/test accounts inserted directly into the DB without going
+    through Stripe checkout, and as a 'forgot token' recovery flow.
+    """
+    if request.method == "OPTIONS":
+        return Response(status=200)
+    body  = request.get_json(force=True) or {}
+    email = body.get("email", "").strip().lower()
+    if not email or "@" not in email:
+        return jsonify({"error": "Invalid email"}), 400
+
+    con = get_db()
+    row = con.execute(
+        "SELECT email, stripe_id, plan FROM subscribers WHERE email=?", (email,)
+    ).fetchone()
+    con.close()
+
+    if not row:
+        return jsonify({"error": "Email not found"}), 404
+
+    sub_email, stripe_id, plan = row
+    if plan != "pro":
+        return jsonify({"error": "Not a Pro subscriber"}), 403
+
+    # Generate the same token formula used in /success
+    stripe_key = os.environ.get("STRIPE_SECRET_KEY", "")
+    sid = stripe_id or ""
+    token = hashlib.sha256(
+        f"{sub_email}:{sid}:{stripe_key}".encode()
+    ).hexdigest()[:32]
+
+    return jsonify({"token": token, "redirect": f"/?pro_token={token}&welcome=1"})
+
 @app.route("/api/subscribe", methods=["POST", "OPTIONS"])
 @limiter.limit("10 per hour")
 def api_subscribe():

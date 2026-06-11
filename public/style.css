@@ -298,7 +298,7 @@ select, input { font-family: var(--font-sans); }
 .tr-locked:hover { background:var(--bg3);opacity:.9; }
 
 .tbl td {
-  padding:10px 14px;
+  padding:7px 12px;
   border-bottom:1px solid var(--border);
   border-right:1px solid var(--border);
   white-space:nowrap; vertical-align:middle;
@@ -946,4 +946,165 @@ select, input { font-family: var(--font-sans); }
   .mc-value.neg {
     color: #f85149;
   }
+}
+/* ── Pagination ──────────────────────────────────────────── */
+.pgn-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+.pgn-info {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text3);
+}
+.pgn-btns {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.pg-btn {
+  padding: 5px 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  color: var(--text2);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all .15s;
+  min-width: 32px;
+  text-align: center;
+}
+.pg-btn:hover { border-color: var(--accent); color: var(--accent); }
+.pg-act { background: var(--accent); color: #000 !important; border-color: var(--accent); }
+.pg-dis { opacity: .4; cursor: default; }
+.pg-dis:hover { border-color: var(--border); color: var(--text2); }
+.pg-ellipsis { font-family: var(--font-mono); font-size: 11px; color: var(--text3); padding: 0 4px; }
+
+/* ── Stats bar desktop/mobile split ─────────────────────── */
+.sbar-mobile { display: none; }
+.sbar-desktop { display: block; }
+@media (max-width: 768px) {
+  .sbar-desktop { display: none; }
+  .sbar-mobile  { display: block; }
+  .sbar-mobile .sbar {
+    /* collapsed 2-col on mobile, appears BELOW the filter bar */
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
+/* ── Mobile card layout improvements ────────────────────── */
+@media (max-width: 768px) {
+  .mc-top-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .mc-rank {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text3);
+    flex-shrink: 0;
+    padding-top: 3px;
+    min-width: 28px;
+  }
+  .mc-ticker-wrap {
+    flex: 1;
+    min-width: 0;
+  }
+  .mc-upside-hero {
+    font-family: var(--font-mono);
+    font-size: 15px;
+    font-weight: 700;
+    flex-shrink: 0;
+    padding-top: 2px;
+  }
+  .mc-upside-hero.u-xl { color: #00e676; }
+  .mc-upside-hero.u-lg { color: #69f0ae; }
+  .mc-upside-hero.u-md { color: #ffd740; }
+  .mc-upside-hero.u-sm { color: var(--text2); }
+
+  /* Compact mobile card — less padding for faster scrolling */
+  .mobile-card {
+    padding: 10px 12px !important;
+  }
+  .mc-header {
+    margin-bottom: 8px !important;
+    padding-bottom: 8px !important;
+  }
+  .mc-grid {
+    gap: 8px 10px !important;
+  }
+  .mc-ticker {
+    font-size: 14px !important;
+  }
+
+  /* Locked mobile card */
+  .mobile-card-locked {
+    opacity: 0.7;
+    position: relative;
+  }
+  .mc-lock-overlay {
+    margin-top: 8px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--accent);
+    letter-spacing: .06em;
+    text-align: center;
+    padding: 6px;
+    border: 1px dashed rgba(240,180,41,.3);
+    border-radius: 4px;
+  }
+
+  /* tr-mobile locked visible */
+  .tr-mobile-locked {
+    display: table-row !important;
+  }
+
+  /* Ensure tbl-wrap and page body can scroll freely on mobile */
+  .tbl-wrap {
+    overflow-x: visible !important;
+    height: auto !important;
+    max-height: none !important;
+  }
+  body { overflow-y: auto !important; }
+}
+
+/* ── Pro recover button in paywall ──────────────────────── */
+.pw-recover {
+  margin-top: 12px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text3);
+}
+.pw-recover-btn {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  text-decoration: underline;
+  padding: 0;
+}
+.pw-recover-btn:hover { opacity: .8; }
+
+/* ── Filter bar — allow wrapping for extra filters ──────── */
+.flts {
+  flex-wrap: wrap;
+}
+@media (max-width: 768px) {
+  .flts { gap: 8px; }
+  .flt-g { min-width: 120px; }
 }
