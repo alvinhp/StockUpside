@@ -300,7 +300,7 @@ function emailBar() {
     return `<div class="email-bar" id="email-bar">
         <div class="email-bar-l">
             📬 <strong>Get the top 10 picks in your inbox every week.</strong>
-            Free — no credit card required.
+            Free. No credit card required.
         </div>
         <div class="email-bar-r">
             <input type="email" id="free-email-input" class="free-email-input"

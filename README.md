@@ -67,17 +67,21 @@ MIT — use commercially, modify freely.
 - Front page has an accuracy tab that gives data on how accurate analyst consensus has been in the past. Currently no data -- data is still being stored in the SQLite database
 - Sector and consensum filters
 - Email list: Get emails from free users and send weekly "top 10 stock picks"
-- "Last updated" timestamp + data freshness indicator (Done)
+- "Last updated" timestamp + data freshness indicator
 - Make sure site is useable on mobile
 - Implemented Stripe payment
 - Filter by number of analysts (>1, >5, >10, >25, ...)
 - Deployed onto Digial Ocean
 - Bought stockupside.io domain
 - Analyst accuracy page
+- P/E, PEG, and momentum filters
+- Fixed pro token and xss security vulerabilities
+- Filter based email sending for pro users
+- Created pages (100 stocks per page)
+- Added login features for pro users
+- Changed generate.py to update the cache per 50 stocks. Also saves data if process times out.
 
 ## TO DO LIST
-- Weekly email digest
-- Fix mobile UI bugs
 - Better SEO optimization
 - Filter by market cap
 - Watchlist: Let free users save 5 stocks, pro users can save unlimited
