@@ -102,14 +102,30 @@ def weekly_digest():
         time.sleep(60)
 
 def send_digest_job():
+    """Send the weekly digest to every subscriber (free and pro).
+
+    - Free subscribers get the unfiltered top-10.
+    - Pro subscribers get their top-10 filtered by their saved
+      email_preferences (if any); if they have no preferences saved,
+      or their filters return no matches, they get the unfiltered top-10
+      as a fallback.
+    """
     stocks = get_stocks_cached()
-    con = get_db()
-    subs = con.execute("SELECT email FROM subscribers WHERE plan='free'").fetchall()
+    if not stocks:
+        print("  ⚠  Weekly digest skipped — no stock data available yet")
+        return
+
+    con  = get_db()
+    subs = con.execute("SELECT email, plan FROM subscribers").fetchall()
     con.close()
-    for (addr,) in subs:
-        subj, html, text = digest_email_html(stocks, addr)
-        send_email(addr, subj, html, text)
-    print(f"  ✓  Weekly digest sent to {len(subs)} subscribers")
+
+    sent = 0
+    for addr, plan in subs:
+        prefs = get_email_prefs(addr) if plan == "pro" else None
+        subj, html, text = digest_email_html(stocks, addr, prefs=prefs)
+        if send_email(addr, subj, html, text):
+            sent += 1
+    print(f"  ✓  Weekly digest sent to {sent}/{len(subs)} subscribers")
 
 # ── Stock universe ─────────────────────────────────────────────────────────────
 UNIVERSE = [
@@ -666,6 +682,18 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         email TEXT UNIQUE, plan TEXT DEFAULT 'free',
         stripe_id TEXT, created_at INTEGER)""")
+
+    # Per-subscriber digest filter preferences (Pro only).
+    # If no row exists for an email, the default top-10 (no filters) is sent.
+    con.execute("""CREATE TABLE IF NOT EXISTS email_preferences(
+        email TEXT PRIMARY KEY,
+        sector TEXT DEFAULT 'All',
+        consensus TEXT DEFAULT 'All',
+        min_analysts INTEGER DEFAULT 0,
+        max_pe REAL DEFAULT 0,
+        max_peg REAL DEFAULT 0,
+        momentum TEXT DEFAULT 'All',
+        updated_at INTEGER)""")
 
     # Daily snapshot of every stock's ranking and targets
     con.execute("""CREATE TABLE IF NOT EXISTS snapshots(
@@ -1458,6 +1486,104 @@ def _unsubscribe_url(email_addr: str) -> str:
     return f"{_SITE_URL}/unsubscribe?email={email_addr}&token={token}"
 
 
+# ── Per-subscriber digest filter preferences (Pro feature) ────────────────────
+DEFAULT_EMAIL_PREFS = {
+    "sector": "All", "consensus": "All", "min_analysts": 0,
+    "max_pe": 0, "max_peg": 0, "momentum": "All",
+}
+
+def get_email_prefs(email_addr: str) -> dict:
+    """Return saved digest filter preferences for a subscriber, or the
+    defaults (no filters, top-10 overall) if none have been saved."""
+    con = get_db()
+    row = con.execute(
+        "SELECT sector, consensus, min_analysts, max_pe, max_peg, momentum "
+        "FROM email_preferences WHERE email=?", (email_addr,)
+    ).fetchone()
+    con.close()
+    if not row:
+        return dict(DEFAULT_EMAIL_PREFS)
+    return {
+        "sector": row[0], "consensus": row[1], "min_analysts": row[2],
+        "max_pe": row[3], "max_peg": row[4], "momentum": row[5],
+    }
+
+def set_email_prefs(email_addr: str, prefs: dict) -> None:
+    """Upsert digest filter preferences for a subscriber."""
+    con = get_db()
+    con.execute("""
+        INSERT INTO email_preferences
+            (email, sector, consensus, min_analysts, max_pe, max_peg, momentum, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(email) DO UPDATE SET
+            sector=excluded.sector, consensus=excluded.consensus,
+            min_analysts=excluded.min_analysts, max_pe=excluded.max_pe,
+            max_peg=excluded.max_peg, momentum=excluded.momentum,
+            updated_at=excluded.updated_at
+    """, (
+        email_addr,
+        prefs.get("sector", "All"), prefs.get("consensus", "All"),
+        int(prefs.get("min_analysts", 0) or 0),
+        float(prefs.get("max_pe", 0) or 0), float(prefs.get("max_peg", 0) or 0),
+        prefs.get("momentum", "All"), int(time.time()),
+    ))
+    con.commit()
+    con.close()
+
+def apply_email_filters(stocks: list, prefs: dict, limit: int = 10) -> list:
+    """Filter the full stock list per a subscriber's saved preferences and
+    return up to `limit` results, preserving the existing upside-based
+    ranking order. Mirrors the frontend's applyFilters() logic in main.ts.
+
+    If the filtered set has fewer than `limit` results, it is NOT padded —
+    the caller decides whether to send a shorter list or fall back to
+    the unfiltered top-10. See digest_email_html() for the fallback note.
+    """
+    s = [x for x in stocks if not x.get("locked")]
+
+    sector = prefs.get("sector", "All")
+    if sector and sector != "All":
+        s = [x for x in s if x.get("sector") == sector]
+
+    consensus = prefs.get("consensus", "All")
+    if consensus and consensus != "All":
+        s = [x for x in s if x.get("consensus") == consensus]
+
+    min_analysts = int(prefs.get("min_analysts", 0) or 0)
+    if min_analysts > 0:
+        s = [x for x in s if x.get("analyst_count", 0) >= min_analysts]
+
+    max_pe = float(prefs.get("max_pe", 0) or 0)
+    if max_pe > 0:
+        s = [x for x in s if 0 < x.get("pe_ratio", 0) <= max_pe]
+
+    max_peg = float(prefs.get("max_peg", 0) or 0)
+    if max_peg > 0:
+        s = [x for x in s if 0 < x.get("peg_ratio", 0) <= max_peg]
+
+    momentum = prefs.get("momentum", "All")
+    if momentum and momentum != "All":
+        s = [x for x in s if x.get("momentum_trend") == momentum]
+
+    return s[:limit]
+
+def _resolve_token_email(token: str) -> str | None:
+    """Resolve a Pro access token back to a subscriber email by checking
+    every pro subscriber's token formula. Token = sha256(email:stripe_id:secret)[:32]."""
+    if not token:
+        return None
+    secret = os.environ.get("STRIPE_SECRET_KEY", "")
+    con = get_db()
+    rows = con.execute("SELECT email, stripe_id FROM subscribers WHERE plan='pro'").fetchall()
+    con.close()
+    for sub_email, stripe_id in rows:
+        sid = stripe_id or ""
+        expected = hashlib.sha256(f"{sub_email}:{sid}:{secret}".encode()).hexdigest()[:32]
+        if expected == token:
+            return sub_email
+    return None
+
+
 def _unsubscribe_token_valid(email_addr: str, token: str) -> bool:
     expected = hashlib.sha256(f"unsub:{email_addr}:{_SMTP_PASS}".encode()).hexdigest()[:24]
     return token == expected
@@ -1483,15 +1609,27 @@ def welcome_email_html(email_addr: str) -> str:
 </body></html>"""
 
 
-def digest_email_html(stocks: list, email_addr: str) -> tuple[str, str]:
-    """Returns (subject, html) for the weekly digest."""
-    top10  = [s for s in stocks if not s.get("locked")][:10]
-    today  = datetime.date.today().strftime("%B %d, %Y")
-    unsub  = _unsubscribe_url(email_addr)
+def digest_email_html(stocks: list, email_addr: str, prefs: dict | None = None) -> tuple[str, str, str]:
+    """Returns (subject, html, text) for the weekly digest.
+
+    If `prefs` is provided (Pro subscribers with saved filters), the top
+    picks are filtered accordingly. If the filtered set is empty, falls
+    back to the unfiltered top-10 and notes this in the email so the
+    subscriber isn't left with a blank digest.
+    """
+    today      = datetime.date.today().strftime("%B %d, %Y")
+    unsub      = _unsubscribe_url(email_addr)
+    is_custom  = bool(prefs) and prefs != DEFAULT_EMAIL_PREFS
+
+    picks = apply_email_filters(stocks, prefs, limit=10) if prefs else None
+    fell_back = False
+    if not picks:
+        picks     = [s for s in stocks if not s.get("locked")][:10]
+        fell_back = is_custom
 
     rows_html = ""
     rows_txt  = ""
-    for s in top10:
+    for s in picks:
         color = "#00e676" if s["upside_pct"] >= 40 else "#69f0ae" if s["upside_pct"] >= 20 else "#ffd740"
         rows_html += f"""
         <tr>
@@ -1507,15 +1645,35 @@ def digest_email_html(stocks: list, email_addr: str) -> tuple[str, str]:
         </tr>"""
         rows_txt += f"  {s['rank']:>2}. {s['ticker']:<6}  +{s['upside_pct']}%  {s['consensus']}\n"
 
-    subject = f"▲ Top 10 Stock Picks — {today}"
+    if is_custom and not fell_back:
+        eyebrow   = "YOUR TOP 10"
+        subject   = f"▲ Your Top 10 Stock Picks — {today}"
+    else:
+        eyebrow   = "WEEKLY TOP 10"
+        subject   = f"▲ Top 10 Stock Picks — {today}"
+
+    fallback_notice_html = ""
+    fallback_notice_txt  = ""
+    if fell_back:
+        fallback_notice_html = """
+  <div style="background:#1f1500;border:1px solid #f0b429;border-radius:4px;
+              padding:10px 14px;font-size:12px;color:#ffd740;margin-bottom:20px">
+    ⚠ No stocks matched your saved filters this week — showing the overall
+    Top 10 instead. Adjust your filters anytime from your account settings.
+  </div>"""
+        fallback_notice_txt = (
+            "Note: No stocks matched your saved filters this week — "
+            "showing the overall Top 10 instead.\n\n"
+        )
+
     html = f"""<!DOCTYPE html>
 <html><body style="font-family:monospace;background:#0d1117;color:#e6edf3;
                    padding:32px;max-width:620px;margin:0 auto">
   <div style="font-size:24px;font-weight:700;margin-bottom:4px">▲ StockUpside.io</div>
   <div style="color:#00e676;font-size:11px;letter-spacing:.1em;
-              margin-bottom:8px">WEEKLY TOP 10</div>
+              margin-bottom:8px">{eyebrow}</div>
   <div style="color:#8b949e;font-size:12px;margin-bottom:28px">{today}</div>
-
+{fallback_notice_html}
   <table style="width:100%;border-collapse:collapse;font-size:13px">
     <thead>
       <tr style="border-bottom:1px solid #30363d">
@@ -1550,7 +1708,8 @@ def digest_email_html(stocks: list, email_addr: str) -> tuple[str, str]:
   </div>
 </body></html>"""
 
-    text = f"▲ StockUpside.io — Top 10 Stock Picks — {today}\n\n{rows_txt}\nView full list: {_SITE_URL}\nUnsubscribe: {unsub}\n"
+    text_title = "Your Top 10 Stock Picks" if (is_custom and not fell_back) else "Top 10 Stock Picks"
+    text = f"▲ StockUpside.io — {text_title} — {today}\n\n{fallback_notice_txt}{rows_txt}\nView full list: {_SITE_URL}\nUnsubscribe: {unsub}\n"
     return subject, html, text
 
 
@@ -1736,7 +1895,9 @@ def api_subscribe_free():
 @app.route("/api/send-digest", methods=["POST"])
 @limiter.limit("5 per day")
 def api_send_digest():
-    """Admin-only: send the weekly top-10 digest to all free subscribers."""
+    """Admin-only: manually trigger the weekly digest to all subscribers
+    (free + pro, with pro subscribers getting their personalized picks).
+    Primarily for testing — the normal cadence runs via weekly_digest()."""
     secret = os.environ.get("ADMIN_SECRET", "")
     if not secret or request.headers.get("X-Admin-Key") != secret:
         return jsonify({"error": "Unauthorized"}), 401
@@ -1746,18 +1907,17 @@ def api_send_digest():
         return jsonify({"error": "No stock data available yet"}), 503
 
     con  = get_db()
-    subs = con.execute(
-        "SELECT email FROM subscribers WHERE plan='free'"
-    ).fetchall()
+    subs = con.execute("SELECT email, plan FROM subscribers").fetchall()
     con.close()
 
     if not subs:
-        return jsonify({"success": True, "sent": 0, "message": "No free subscribers yet"})
+        return jsonify({"success": True, "sent": 0, "message": "No subscribers yet"})
 
     def _send_all():
         sent = 0
-        for (addr,) in subs:
-            subj, html, text = digest_email_html(stocks, addr)
+        for addr, plan in subs:
+            prefs = get_email_prefs(addr) if plan == "pro" else None
+            subj, html, text = digest_email_html(stocks, addr, prefs=prefs)
             if send_email(addr, subj, html, text):
                 sent += 1
             time.sleep(0.1)   # gentle throttle
@@ -1844,6 +2004,89 @@ def api_verify():
             return jsonify({"valid": True, "plan": "pro"})
 
     return jsonify({"valid": False, "plan": "free"})
+
+@app.route("/api/get-token", methods=["POST", "OPTIONS"])
+@limiter.limit("5 per hour")
+def api_get_token():
+    """Allow a known pro subscriber to retrieve their access token by email.
+    Used for manual/test accounts and as a 'forgot token' recovery flow."""
+    if request.method == "OPTIONS":
+        return Response(status=200)
+    body  = request.get_json(force=True) or {}
+    email = body.get("email", "").strip().lower()
+    if not email or "@" not in email:
+        return jsonify({"error": "Invalid email"}), 400
+
+    con = get_db()
+    row = con.execute(
+        "SELECT email, stripe_id, plan FROM subscribers WHERE email=?", (email,)
+    ).fetchone()
+    con.close()
+
+    if not row:
+        return jsonify({"error": "Email not found"}), 404
+
+    sub_email, stripe_id, plan = row
+    if plan != "pro":
+        return jsonify({"error": "Not a Pro subscriber"}), 403
+
+    stripe_key = os.environ.get("STRIPE_SECRET_KEY", "")
+    sid = stripe_id or ""
+    token = hashlib.sha256(f"{sub_email}:{sid}:{stripe_key}".encode()).hexdigest()[:32]
+
+    return jsonify({"token": token, "redirect": f"/?pro_token={token}&welcome=1"})
+
+
+@app.route("/api/email-prefs", methods=["GET", "POST", "OPTIONS"])
+@limiter.limit("30 per hour")
+def api_email_prefs():
+    """Get or set a Pro subscriber's weekly digest filter preferences.
+
+    Auth: pass the Pro access token as either the 'token' query/body param
+    or an 'Authorization: Bearer <token>' header. Resolves to the
+    subscriber's email server-side — the email itself is never trusted
+    from the client for write operations.
+    """
+    if request.method == "OPTIONS":
+        return Response(status=200)
+
+    token = (
+        request.args.get("token")
+        or (request.get_json(silent=True) or {}).get("token")
+        or request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+    )
+    email_addr = _resolve_token_email(token)
+    if not email_addr:
+        return jsonify({"error": "Invalid or expired Pro token"}), 401
+
+    if request.method == "GET":
+        return jsonify({"prefs": get_email_prefs(email_addr)})
+
+    # POST — save new preferences
+    body  = request.get_json(force=True) or {}
+    prefs = body.get("prefs", {})
+
+    valid_consensus = {"All", "Strong Buy", "Buy", "Hold", "Underperform"}
+    valid_momentum  = {"All", "up", "down", "neutral"}
+
+    cleaned = {
+        "sector":       str(prefs.get("sector", "All") or "All"),
+        "consensus":    prefs.get("consensus", "All") if prefs.get("consensus") in valid_consensus else "All",
+        "min_analysts": max(0, int(prefs.get("min_analysts", 0) or 0)),
+        "max_pe":       max(0.0, float(prefs.get("max_pe", 0) or 0)),
+        "max_peg":      max(0.0, float(prefs.get("max_peg", 0) or 0)),
+        "momentum":     prefs.get("momentum", "All") if prefs.get("momentum") in valid_momentum else "All",
+    }
+
+    set_email_prefs(email_addr, cleaned)
+
+    # Tell the caller how many stocks currently match, so the UI can warn
+    # if the combination is too narrow (e.g. "only 3 stocks match").
+    stocks  = get_stocks_cached()
+    matches = len(apply_email_filters(stocks, cleaned, limit=10_000)) if stocks else 0
+
+    return jsonify({"success": True, "prefs": cleaned, "matching_stocks": matches})
+
 
 @app.route("/api/refresh", methods=["POST"])
 @limiter.limit("5 per hour")
