@@ -4,6 +4,20 @@
 
 const API = "/api";
 
+// ── XSS helper ─────────────────────────────────────────────────────────────────
+// Any user-controlled string (search query, etc.) interpolated into a
+// template that gets assigned via innerHTML must be escaped first —
+// otherwise a query like `"><img src=x onerror=alert(1)>` breaks out of
+// the search input's value="..." attribute and executes arbitrary script.
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 // ── Types ──────────────────────────────────────────────────────────────────────
 interface Stock {
   rank: number; ticker: string; name: string; sector: string;
@@ -89,7 +103,7 @@ async function load() {
       if (!vd.valid) { proToken=""; localStorage.removeItem("su_token"); }
     }
     const [sr, str] = await Promise.all([
-      fetch(`${API}/stocks?tier=${tier}`),
+      fetch(`${API}/stocks${proToken ? `?token=${encodeURIComponent(proToken)}` : ""}`),
       fetch(`${API}/stats`)
     ]);
     const sd: ApiResp   = await sr.json();
@@ -195,7 +209,7 @@ function setLoader(on: boolean) {
 }
 function errScreen(e: string) {
   return `<div class="err-wrap"><div class="err-icon">⚠</div>
-    <div class="err-msg">Could not connect to server.<br><small>${e}</small></div>
+    <div class="err-msg">Could not connect to server.<br><small>${escapeHtml(e)}</small></div>
     <button class="btn-retry" onclick="location.reload()">Retry</button></div>`;
 }
 
@@ -246,7 +260,7 @@ function header() {
         <span id="cd" class="cd">--:--:--</span>
       </div>
       ${tier === "pro"
-        ? `<button class="btn-emailprefs" id="btn-emailprefs">✉ Digest Settings</button><div class="pro-chip">✦ PRO</div>`
+        ? `<button class="btn-emailprefs" id="btn-emailprefs">✉ Digest Settings</button><div class="pro-chip">✦ PRO</div><button class="btn-login" id="btn-logout">Log Out</button>`
         : `<button class="btn-login" id="btn-login">Log In</button><button class="btn-pro" id="btn-paywall">Unlock Pro →</button>`}
     </div>
   </header>`;
@@ -331,7 +345,7 @@ function controls(sectors: string[], count: number) {
   return `<div class="ctrl">
     <div class="srch-wrap">
       <span class="srch-icon">⌕</span>
-      <input id="srch" class="srch" type="text" placeholder="Search ticker, company, sector…" value="${query}" />
+      <input id="srch" class="srch" type="text" placeholder="Search ticker, company, sector…" value="${escapeHtml(query)}" />
       ${query ? `<button class="srch-clr" id="srch-clr">✕</button>` : ""}
     </div>
     <div class="flts">
@@ -992,28 +1006,26 @@ function bindRows() {
 }
 
 function bindGlobals() {
-  // Pro token recovery
+  // Pro login link request
   const recoverBtn = document.getElementById("pw-recover-btn");
   if (recoverBtn) recoverBtn.onclick = async () => {
-    const email = prompt("Enter your Pro subscriber email:");
+    const email = prompt("Enter the email you subscribed with — we'll send you a login link:");
     if (!email || !email.includes("@")) return;
-    recoverBtn.textContent = "Looking up…";
+    recoverBtn.textContent = "Sending…";
     try {
       const r = await fetch(API + "/get-token", {
         method: "POST", headers: {"Content-Type":"application/json"},
         body: JSON.stringify({email})
       });
       const d = await r.json();
-      if (d.token) {
-        proToken = d.token;
-        localStorage.setItem("su_token", proToken);
-        window.location.href = d.redirect;
+      if (d.success) {
+        toast("If that email has a Pro subscription, a login link is on its way.", "ok");
       } else {
-        toast(d.error || "Email not found", "err");
-        recoverBtn.textContent = "Restore access →";
+        toast(d.error || "Something went wrong", "err");
       }
     } catch {
       toast("Could not connect", "err");
+    } finally {
       recoverBtn.textContent = "Restore access →";
     }
   };
@@ -1095,28 +1107,44 @@ if (subBtn) subBtn.onclick = async () => {
   const fMom = document.getElementById("flt-momentum") as HTMLSelectElement;
   if (fMom) fMom.onchange = () => { momentumFilter=fMom.value; currentPage=1; applyFilters(); renderRows(); };
 
-  // Log In button
+  // Log Out button (Pro users)
+  const btnLogout = document.getElementById("btn-logout");
+  if (btnLogout) btnLogout.onclick = async () => {
+    try {
+      await fetch(API + "/logout", {
+        method: "POST", headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({token: proToken})
+      });
+    } catch {
+      // Even if the request fails, clear local state so this device
+      // stops sending the token.
+    }
+    proToken = "";
+    localStorage.removeItem("su_token");
+    window.location.href = "/";
+  };
+
+  // Log In button — sends a one-time login link by email (no token is
+  // ever returned directly from this endpoint; see /api/get-token).
   const btnLogin = document.getElementById("btn-login");
   if (btnLogin) btnLogin.onclick = async () => {
-    const email = prompt("Enter your Pro subscriber email:");
+    const email = prompt("Enter the email you subscribed with — we'll send you a login link:");
     if (!email || !email.includes("@")) return;
-    btnLogin.textContent = "Checking…";
+    btnLogin.textContent = "Sending…";
     try {
       const r = await fetch(API + "/get-token", {
         method: "POST", headers: {"Content-Type":"application/json"},
         body: JSON.stringify({email})
       });
       const d = await r.json();
-      if (d.token) {
-        proToken = d.token;
-        localStorage.setItem("su_token", proToken);
-        window.location.href = d.redirect;
+      if (d.success) {
+        toast("If that email has a Pro subscription, a login link is on its way.", "ok");
       } else {
-        toast(d.error || "Email not found. Check you used the address you subscribed with.", "err");
-        btnLogin.textContent = "Log In";
+        toast(d.error || "Something went wrong", "err");
       }
     } catch {
       toast("Could not connect", "err");
+    } finally {
       btnLogin.textContent = "Log In";
     }
   };

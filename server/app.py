@@ -4,9 +4,10 @@ Run: python3 server/app.py
 Serves the REST API on :5000 and static files from /public
 """
 
-import json, sqlite3, time, datetime, hashlib, os, math, threading, webbrowser
+import json, sqlite3, time, datetime, hashlib, hmac, secrets, os, math, threading, webbrowser
 import smtplib, email.mime.multipart, email.mime.text
 from flask import Flask, jsonify, request, send_from_directory, Response, redirect
+from markupsafe import escape
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
@@ -24,6 +25,16 @@ LOG_PATH   = os.path.join(BASE_DIR, "server", "generate.log")
 
 app = Flask(__name__, static_folder=PUBLIC_DIR, static_url_path="")
 limiter = Limiter(get_remote_address, app=app, default_limits=["200 per hour"])
+
+# Dedicated secret for HMAC-derived tokens (unsubscribe links, etc.) and
+# Flask's own session signing. Set APP_SECRET_KEY in production so tokens
+# and signed cookies survive a restart; falls back to a random per-process
+# value in dev (fine — just means existing unsubscribe links break on restart).
+_APP_SECRET = os.environ.get("APP_SECRET_KEY") or secrets.token_hex(32)
+if not os.environ.get("APP_SECRET_KEY"):
+    print("  ⚠  APP_SECRET_KEY not set — using a random per-process secret. "
+          "Set APP_SECRET_KEY in production so unsubscribe links don't break on restart.")
+app.secret_key = _APP_SECRET
 
 # ── In-memory stock cache (populated by get_stocks_cached, invalidated nightly) ─
 _cache_lock: threading.Lock = threading.Lock()
@@ -43,6 +54,14 @@ def nightly_refresh():
     generate.py writes directly to the SQLite DB; once it exits we
     invalidate the in-memory cache so the next request picks up fresh data.
     All output — including errors — is written to server/generate.log.
+
+    generate.py checkpoints its progress to the DB after every ticker, so:
+      - On timeout, we send SIGTERM (not SIGKILL) and give it a grace
+        period to checkpoint and exit cleanly.
+      - If a run doesn't finish (timeout, non-zero exit), we immediately
+        relaunch — resume makes the next pass fast since only the
+        remaining tickers are fetched. Capped at a few attempts per night
+        so a persistent failure doesn't loop forever.
     """
     import subprocess, sys
 
@@ -57,6 +76,9 @@ def nightly_refresh():
             pass
 
     generate_script = os.path.join(BASE_DIR, "server", "generate.py")
+    RUN_TIMEOUT     = 3 * 3600   # per-attempt wall clock cap
+    GRACE_PERIOD    = 60         # seconds to let SIGTERM checkpoint before SIGKILL
+    MAX_ATTEMPTS    = 3          # cap relaunches per night
 
     while True:
         now    = datetime.datetime.now()
@@ -70,27 +92,45 @@ def nightly_refresh():
         while (target - datetime.datetime.now()).total_seconds() > 0:
             time.sleep(min(60, max(0, (target - datetime.datetime.now()).total_seconds())))
 
-        log("Launching generate.py...")
         set_generating(True)
         try:
-            with open(LOG_PATH, "a") as logfile:
-                result = subprocess.run(
-                    [sys.executable, generate_script],
-                    timeout=4 * 3600,
-                    stdout=logfile,
-                    stderr=logfile,
-                )
-            if result.returncode == 0:
-                invalidate_memory_cache()
-                log(f"Nightly refresh complete — cache invalidated (exit 0).")
+            for attempt in range(1, MAX_ATTEMPTS + 1):
+                log(f"Launching generate.py (attempt {attempt}/{MAX_ATTEMPTS})...")
+                try:
+                    with open(LOG_PATH, "a") as logfile:
+                        proc = subprocess.Popen(
+                            [sys.executable, generate_script],
+                            stdout=logfile, stderr=logfile,
+                        )
+                        try:
+                            returncode = proc.wait(timeout=RUN_TIMEOUT)
+                        except subprocess.TimeoutExpired:
+                            log(f"generate.py exceeded {RUN_TIMEOUT/3600:.1f}h — "
+                                f"sending SIGTERM to checkpoint and exit.")
+                            proc.terminate()
+                            try:
+                                returncode = proc.wait(timeout=GRACE_PERIOD)
+                            except subprocess.TimeoutExpired:
+                                log("generate.py did not exit after SIGTERM — sending SIGKILL.")
+                                proc.kill()
+                                returncode = proc.wait()
+
+                    if returncode == 0:
+                        invalidate_memory_cache()
+                        log("Nightly refresh complete — cache invalidated (exit 0).")
+                        break
+                    else:
+                        log(f"generate.py exited with code {returncode} "
+                            f"— check {LOG_PATH}. Will retry (resume) if attempts remain.")
+                        invalidate_memory_cache()  # checkpoint merges may have updated cache
+                except FileNotFoundError:
+                    log(f"generate.py not found at {generate_script} — check path.")
+                    break
+                except Exception as e:
+                    log(f"Nightly refresh attempt failed with unexpected error: {e}")
             else:
-                log(f"generate.py exited with code {result.returncode} — check {LOG_PATH}")
-        except subprocess.TimeoutExpired:
-            log("generate.py timed out after 4 hours — killing process.")
-        except FileNotFoundError:
-            log(f"generate.py not found at {generate_script} — check path.")
-        except Exception as e:
-            log(f"Nightly refresh failed with unexpected error: {e}")
+                log(f"Gave up after {MAX_ATTEMPTS} attempts tonight — "
+                    f"cache holds whatever was checkpointed. Will try again tomorrow.")
         finally:
             set_generating(False)
 
@@ -682,6 +722,20 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         email TEXT UNIQUE, plan TEXT DEFAULT 'free',
         stripe_id TEXT, created_at INTEGER)""")
+
+    # Session-based Pro access tokens. Replaces the old scheme where a
+    # token was a deterministic hash of email+stripe_id+secret (permanent,
+    # shareable, no expiry, no way to revoke). Tokens here are random,
+    # tied to one subscriber, expire after SESSION_TTL_DAYS, and can be
+    # revoked by deleting the row (e.g. on logout or "sign out everywhere").
+    con.execute("""CREATE TABLE IF NOT EXISTS sessions(
+        token TEXT PRIMARY KEY,
+        email TEXT NOT NULL,
+        created_at INTEGER NOT NULL,
+        expires_at INTEGER NOT NULL,
+        last_seen INTEGER)""")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_sessions_email ON sessions(email)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)")
 
     # Per-subscriber digest filter preferences (Pro only).
     # If no row exists for an email, the default top-10 (no filters) is sent.
@@ -1482,7 +1536,7 @@ def send_email(to: str, subject: str, html: str, text: str = "") -> bool:
 
 
 def _unsubscribe_url(email_addr: str) -> str:
-    token = hashlib.sha256(f"unsub:{email_addr}:{_SMTP_PASS}".encode()).hexdigest()[:24]
+    token = hashlib.sha256(f"unsub:{email_addr}:{_APP_SECRET}".encode()).hexdigest()[:24]
     return f"{_SITE_URL}/unsubscribe?email={email_addr}&token={token}"
 
 
@@ -1568,25 +1622,107 @@ def apply_email_filters(stocks: list, prefs: dict, limit: int = 10) -> list:
     return s[:limit]
 
 def _resolve_token_email(token: str) -> str | None:
-    """Resolve a Pro access token back to a subscriber email by checking
-    every pro subscriber's token formula. Token = sha256(email:stripe_id:secret)[:32]."""
+    """Resolve a Pro session token to a subscriber email. Returns None if
+    the token doesn't exist, has expired, or the subscriber is no longer
+    on the Pro plan (e.g. they cancelled)."""
     if not token:
         return None
-    secret = os.environ.get("STRIPE_SECRET_KEY", "")
+    now = int(time.time())
     con = get_db()
-    rows = con.execute("SELECT email, stripe_id FROM subscribers WHERE plan='pro'").fetchall()
+    row = con.execute(
+        "SELECT s.email, s.expires_at, sub.plan "
+        "FROM sessions s LEFT JOIN subscribers sub ON sub.email = s.email "
+        "WHERE s.token = ?", (token,)
+    ).fetchone()
+    if not row:
+        con.close()
+        return None
+    email_addr, expires_at, plan = row
+    if expires_at < now or plan != "pro":
+        # Expired or no longer Pro — clean up the dangling session.
+        con.execute("DELETE FROM sessions WHERE token=?", (token,))
+        con.commit()
+        con.close()
+        return None
+    con.execute("UPDATE sessions SET last_seen=? WHERE token=?", (now, token))
+    con.commit()
     con.close()
-    for sub_email, stripe_id in rows:
-        sid = stripe_id or ""
-        expected = hashlib.sha256(f"{sub_email}:{sid}:{secret}".encode()).hexdigest()[:32]
-        if expected == token:
-            return sub_email
-    return None
+    return email_addr
+
+# ── Session-based Pro access tokens ────────────────────────────────────────────
+# Tokens are cryptographically random (32 bytes, urlsafe), stored server-side
+# in `sessions` with an expiry, and resolved by direct DB lookup rather than
+# by recomputing a deterministic hash. This means:
+#   - A leaked token has no PII and stops working after SESSION_TTL_DAYS.
+#   - Tokens can be revoked individually (e.g. "log out everywhere").
+#   - Possessing a token proves nothing about WHO you are beyond "had a
+#     valid session at some point" — same as any other session cookie scheme.
+SESSION_TTL_DAYS = 30
+
+def create_session(email_addr: str) -> str:
+    """Issue a new random session token for a Pro subscriber."""
+    token = secrets.token_urlsafe(32)
+    now   = int(time.time())
+    expires = now + SESSION_TTL_DAYS * 86400
+    con = get_db()
+    con.execute(
+        "INSERT INTO sessions (token, email, created_at, expires_at, last_seen) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (token, email_addr, now, expires, now),
+    )
+    con.commit()
+    con.close()
+    return token
+
+def revoke_session(token: str) -> bool:
+    """Invalidate a single session token (logout)."""
+    con = get_db()
+    cur = con.execute("DELETE FROM sessions WHERE token=?", (token,))
+    con.commit()
+    con.close()
+    return cur.rowcount > 0
+
+def revoke_all_sessions(email_addr: str) -> int:
+    """Invalidate every session for a subscriber (e.g. 'sign out everywhere',
+    or automatically when a subscription is cancelled)."""
+    con = get_db()
+    cur = con.execute("DELETE FROM sessions WHERE email=?", (email_addr,))
+    con.commit()
+    con.close()
+    return cur.rowcount
+
+def downgrade_subscriber(email_addr: str) -> bool:
+    """Move a subscriber back to the free plan and revoke all of their
+    Pro sessions. Called when Stripe reports a subscription was cancelled
+    or payment failed permanently. Returns True if a row was updated."""
+    con = get_db()
+    cur = con.execute(
+        "UPDATE subscribers SET plan='free' WHERE email=? AND plan='pro'",
+        (email_addr,),
+    )
+    con.commit()
+    con.close()
+    revoke_all_sessions(email_addr)
+    return cur.rowcount > 0
+
+
+def _admin_authorized() -> bool:
+    """Constant-time admin secret check. Plain `!=` on strings of
+    different lengths returns immediately, leaking how many leading
+    characters matched via response timing — `hmac.compare_digest`
+    avoids this."""
+    secret = os.environ.get("ADMIN_SECRET", "")
+    provided = request.headers.get("X-Admin-Key", "")
+    if not secret:
+        return False
+    return hmac.compare_digest(provided, secret)
 
 
 def _unsubscribe_token_valid(email_addr: str, token: str) -> bool:
-    expected = hashlib.sha256(f"unsub:{email_addr}:{_SMTP_PASS}".encode()).hexdigest()[:24]
-    return token == expected
+    expected = hashlib.sha256(f"unsub:{email_addr}:{_APP_SECRET}".encode()).hexdigest()[:24]
+    # Constant-time comparison — plain `==` leaks timing information that
+    # can be used to brute-force the token byte-by-byte.
+    return hmac.compare_digest(token, expected)
 
 
 def welcome_email_html(email_addr: str) -> str:
@@ -1717,7 +1853,16 @@ def digest_email_html(stocks: list, email_addr: str, prefs: dict | None = None) 
 @app.route("/api/stocks")
 @limiter.limit("600 per hour")
 def api_stocks():
-    tier   = request.args.get("tier", "free")
+    # SECURITY: tier is determined server-side from a verified session
+    # token — never trust a client-supplied `?tier=pro` query param.
+    # Previously this endpoint returned the full Pro dataset to anyone
+    # who requested `?tier=pro` directly, with zero authentication.
+    token = (
+        request.args.get("token", "")
+        or request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+    )
+    tier = "pro" if _resolve_token_email(token) else "free"
+
     stocks = get_stocks_cached()
     today  = datetime.date.today()
     nxt    = (today + datetime.timedelta(days=1)).isoformat()
@@ -1837,11 +1982,6 @@ def success_page():
         email      = session.customer_details.email.strip().lower()
         stripe_id  = session.customer
 
-        # Generate a token tied to their email
-        token = hashlib.sha256(
-            f"{email}:{stripe_id}:{os.environ.get('STRIPE_SECRET_KEY','')}".encode()
-        ).hexdigest()[:32]
-
         con = get_db()
         con.execute("""
             INSERT OR REPLACE INTO subscribers (email, plan, stripe_id, created_at)
@@ -1850,12 +1990,80 @@ def success_page():
         con.commit()
         con.close()
 
+        # Issue a fresh random session token (replaces the old deterministic,
+        # permanent, shareable token scheme).
+        token = create_session(email)
+
         # Pass the token to the frontend via URL fragment so it lands in localStorage
         return redirect(f"/?pro_token={token}&welcome=1")
 
     except Exception as e:
         print(f"  ⚠  Success page error: {e}")
         return redirect("/")
+
+@app.route("/api/stripe-webhook", methods=["POST"])
+@limiter.exempt
+def stripe_webhook():
+    """Handle Stripe webhook events — specifically subscription cancellations.
+
+    When a subscriber cancels (or their subscription lapses due to failed
+    payment, etc.), Stripe sends `customer.subscription.deleted`. Without
+    this handler, a cancelled subscriber would stay `plan='pro'` in our DB
+    indefinitely, and their session tokens would keep working for the full
+    SESSION_TTL_DAYS — i.e. they'd retain Pro access after cancelling.
+
+    On `customer.subscription.deleted`:
+      - Downgrade the matching subscriber (by stripe_id / customer id) to 'free'.
+      - Revoke all their active session tokens immediately.
+
+    Setup: in the Stripe dashboard, add an endpoint pointing at
+    https://yourdomain.com/api/stripe-webhook, subscribed to the
+    `customer.subscription.deleted` event, and set STRIPE_WEBHOOK_SECRET
+    to the signing secret Stripe gives you for that endpoint.
+    """
+    payload    = request.get_data()
+    sig_header = request.headers.get("Stripe-Signature", "")
+    webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
+
+    if not webhook_secret:
+        print("  ⚠  STRIPE_WEBHOOK_SECRET not set — rejecting webhook (cannot verify signature).")
+        return jsonify({"error": "Webhook not configured"}), 503
+
+    try:
+        event = stripe.Webhook.construct_event(payload, sig_header, webhook_secret)
+    except ValueError:
+        return jsonify({"error": "Invalid payload"}), 400
+    except stripe.error.SignatureVerificationError:
+        return jsonify({"error": "Invalid signature"}), 400
+
+    event_type = event.get("type", "")
+
+    if event_type == "customer.subscription.deleted":
+        sub = event["data"]["object"]
+        customer_id = sub.get("customer")
+        if not customer_id:
+            return jsonify({"success": True})
+
+        con = get_db()
+        row = con.execute(
+            "SELECT email FROM subscribers WHERE stripe_id=?", (customer_id,)
+        ).fetchone()
+        con.close()
+
+        if row:
+            email_addr = row[0]
+            downgrade_subscriber(email_addr)
+            print(f"  ✓  Subscription cancelled for {email_addr} — "
+                  f"downgraded to free, sessions revoked.")
+        else:
+            print(f"  ⚠  Webhook: customer.subscription.deleted for unknown "
+                  f"stripe_id={customer_id}")
+
+    # Acknowledge all other event types without action (Stripe retries on
+    # non-2xx, so we always return 200 for events we don't care about).
+    return jsonify({"success": True})
+
+
 
 @app.route("/api/subscribe-free", methods=["POST", "OPTIONS"])
 @limiter.limit("10 per hour")
@@ -1898,8 +2106,7 @@ def api_send_digest():
     """Admin-only: manually trigger the weekly digest to all subscribers
     (free + pro, with pro subscribers getting their personalized picks).
     Primarily for testing — the normal cadence runs via weekly_digest()."""
-    secret = os.environ.get("ADMIN_SECRET", "")
-    if not secret or request.headers.get("X-Admin-Key") != secret:
+    if not _admin_authorized():
         return jsonify({"error": "Unauthorized"}), 401
 
     stocks = get_stocks_cached()
@@ -1933,6 +2140,12 @@ def unsubscribe_page():
     addr  = request.args.get("email", "").strip().lower()
     token = request.args.get("token", "")
     yr    = datetime.date.today().year
+    # XSS fix: `addr` is attacker-controlled (a query param) and is
+    # reflected into the page below. Even though a valid token is
+    # required, an attacker can request a token for an email address
+    # they control that *contains* HTML/JS, then send that crafted
+    # unsubscribe link to a victim. Escape before interpolating.
+    safe_addr = escape(addr)
 
     if not addr or not _unsubscribe_token_valid(addr, token):
         return Response(f"""<!DOCTYPE html>
@@ -1969,7 +2182,7 @@ def unsubscribe_page():
   <div style="font-family:var(--font-mono);font-size:18px;margin-bottom:16px;
               color:var(--accent)">✓ Unsubscribed</div>
   <p style="color:var(--text2)">
-    <strong style="color:var(--text)">{addr}</strong> has been removed from
+    <strong style="color:var(--text)">{safe_addr}</strong> has been removed from
     all StockUpside.io mailing lists.
   </p>
   <a href="/" style="color:var(--accent);font-family:var(--font-mono);
@@ -1988,28 +2201,25 @@ def api_verify():
     if not token:
         return jsonify({"valid": False, "plan": "free"})
 
-    # Recompute expected token for every pro subscriber and compare
-    con  = get_db()
-    subs = con.execute(
-        "SELECT email, stripe_id FROM subscribers WHERE plan='pro'"
-    ).fetchall()
-    con.close()
-
-    stripe_key = os.environ.get("STRIPE_SECRET_KEY", "")
-    for email, stripe_id in subs:
-        expected = hashlib.sha256(
-            f"{email}:{stripe_id}:{stripe_key}".encode()
-        ).hexdigest()[:32]
-        if token == expected:
-            return jsonify({"valid": True, "plan": "pro"})
+    email_addr = _resolve_token_email(token)
+    if email_addr:
+        return jsonify({"valid": True, "plan": "pro"})
 
     return jsonify({"valid": False, "plan": "free"})
 
 @app.route("/api/get-token", methods=["POST", "OPTIONS"])
 @limiter.limit("5 per hour")
 def api_get_token():
-    """Allow a known pro subscriber to retrieve their access token by email.
-    Used for manual/test accounts and as a 'forgot token' recovery flow."""
+    """Request a Pro login link by email ('forgot access' / cross-device login).
+
+    SECURITY: This endpoint deliberately does NOT return a token directly.
+    Email addresses are not secret — if we returned a fresh session token
+    to anyone who typed in a known subscriber's email, that would be an
+    account-takeover vector. Instead we email a one-time login link to the
+    address on file. The response is identical whether or not the email
+    is a Pro subscriber, so this endpoint can't be used to enumerate
+    subscribers either.
+    """
     if request.method == "OPTIONS":
         return Response(status=200)
     body  = request.get_json(force=True) or {}
@@ -2019,22 +2229,80 @@ def api_get_token():
 
     con = get_db()
     row = con.execute(
-        "SELECT email, stripe_id, plan FROM subscribers WHERE email=?", (email,)
+        "SELECT email, plan FROM subscribers WHERE email=?", (email,)
     ).fetchone()
     con.close()
 
-    if not row:
-        return jsonify({"error": "Email not found"}), 404
+    if row and row[1] == "pro":
+        sub_email = row[0]
+        token   = create_session(sub_email)
+        link    = f"{_SITE_URL}/login?token={token}"
+        subject = "▲ Your StockUpside.io Pro login link"
+        html = f"""<!DOCTYPE html>
+<html><body style="font-family:monospace;background:#0d1117;color:#e6edf3;
+                   padding:32px;max-width:480px;margin:0 auto">
+  <div style="font-size:20px;font-weight:700;margin-bottom:20px">▲ StockUpside.io</div>
+  <p style="color:#8b949e;font-size:13px;line-height:1.6">
+    Click the link below to log in to your Pro account on this device.
+    This link expires once used and works for {SESSION_TTL_DAYS} days.
+  </p>
+  <a href="{link}" style="display:inline-block;margin:16px 0;padding:10px 20px;
+     background:#00e676;color:#000;font-weight:700;text-decoration:none;
+     border-radius:4px;font-size:13px">Log In to StockUpside.io →</a>
+  <p style="color:#8b949e;font-size:11px;line-height:1.6">
+    If you didn't request this, you can safely ignore this email.
+  </p>
+</body></html>"""
+        text = f"Log in to StockUpside.io Pro: {link}\n\nIf you didn't request this, ignore this email."
+        send_email(sub_email, subject, html, text)
 
-    sub_email, stripe_id, plan = row
-    if plan != "pro":
-        return jsonify({"error": "Not a Pro subscriber"}), 403
+    # Same response regardless of whether the email matched — prevents
+    # using this endpoint to check which emails are Pro subscribers.
+    return jsonify({"success": True,
+                    "message": "If that email has a Pro subscription, "
+                               "we've sent a login link to it."})
 
-    stripe_key = os.environ.get("STRIPE_SECRET_KEY", "")
-    sid = stripe_id or ""
-    token = hashlib.sha256(f"{sub_email}:{sid}:{stripe_key}".encode()).hexdigest()[:32]
 
-    return jsonify({"token": token, "redirect": f"/?pro_token={token}&welcome=1"})
+@app.route("/login")
+@limiter.limit("30 per hour")
+def login_via_token():
+    """Land here from the magic-link email. Validates the token (proving
+    the click came from the inbox it was sent to) then hands it to the
+    frontend the same way Stripe checkout does."""
+    token = request.args.get("token", "")
+    email_addr = _resolve_token_email(token)
+    if not email_addr:
+        return redirect("/?login_error=invalid_or_expired")
+    return redirect(f"/?pro_token={token}&welcome=1")
+
+
+@app.route("/api/logout", methods=["POST", "OPTIONS"])
+@limiter.limit("30 per hour")
+def api_logout():
+    """Revoke the current session token (this device only)."""
+    if request.method == "OPTIONS":
+        return Response(status=200)
+    body  = request.get_json(force=True) or {}
+    token = body.get("token", "").strip()
+    if token:
+        revoke_session(token)
+    return jsonify({"success": True})
+
+
+@app.route("/api/logout-everywhere", methods=["POST", "OPTIONS"])
+@limiter.limit("10 per hour")
+def api_logout_everywhere():
+    """Revoke ALL sessions for the subscriber tied to the given token —
+    use if a token may have been shared/leaked."""
+    if request.method == "OPTIONS":
+        return Response(status=200)
+    body  = request.get_json(force=True) or {}
+    token = body.get("token", "").strip()
+    email_addr = _resolve_token_email(token)
+    if not email_addr:
+        return jsonify({"error": "Invalid or expired session"}), 401
+    n = revoke_all_sessions(email_addr)
+    return jsonify({"success": True, "revoked": n})
 
 
 @app.route("/api/email-prefs", methods=["GET", "POST", "OPTIONS"])
@@ -2094,8 +2362,7 @@ def api_refresh():
     """Admin-only: kick off a data refresh without waiting for 01:00.
     Spawns generate.py in a background thread so the HTTP response is instant."""
     import subprocess, sys
-    secret = os.environ.get("ADMIN_SECRET", "")
-    if not secret or request.headers.get("X-Admin-Key") != secret:
+    if not _admin_authorized():
         return jsonify({"error": "Unauthorized"}), 401
     if is_generating():
         return jsonify({"error": "Refresh already in progress"}), 429
@@ -2104,21 +2371,34 @@ def api_refresh():
 
     def _run():
         set_generating(True)
+        RUN_TIMEOUT  = 3 * 3600
+        GRACE_PERIOD = 60
         try:
             with open(LOG_PATH, "a") as logfile:
                 ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 logfile.write(f"[{ts}] Manual refresh triggered via /api/refresh\n")
-                result = subprocess.run(
+                proc = subprocess.Popen(
                     [sys.executable, generate_script],
-                    timeout=4 * 3600,
-                    stdout=logfile,
-                    stderr=logfile,
+                    stdout=logfile, stderr=logfile,
                 )
-            if result.returncode == 0:
+                try:
+                    returncode = proc.wait(timeout=RUN_TIMEOUT)
+                except subprocess.TimeoutExpired:
+                    logfile.write(f"[{ts}] Manual refresh exceeded "
+                                   f"{RUN_TIMEOUT/3600:.1f}h — sending SIGTERM.\n")
+                    proc.terminate()
+                    try:
+                        returncode = proc.wait(timeout=GRACE_PERIOD)
+                    except subprocess.TimeoutExpired:
+                        proc.kill()
+                        returncode = proc.wait()
+            if returncode == 0:
                 invalidate_memory_cache()
                 print("  ✓  Manual refresh complete — cache invalidated.")
             else:
-                print(f"  ⚠  generate.py exited with code {result.returncode} — check {LOG_PATH}")
+                invalidate_memory_cache()  # checkpoint merges may have updated cache
+                print(f"  ⚠  generate.py exited with code {returncode} — check {LOG_PATH}. "
+                      f"Partial progress was checkpointed; re-run /api/refresh to resume.")
         except Exception as e:
             print(f"  ⚠  Manual refresh failed: {e}")
         finally:
@@ -2352,6 +2632,10 @@ function ratingColor(c) {{
 
 def render_404_page(path: str = "") -> str:
     yr = datetime.date.today().year
+    # XSS fix: `path` is attacker-controlled (the requested URL). Escape it
+    # before interpolating into HTML — previously this allowed reflected XSS
+    # via e.g. /stocks/<script>alert(1)</script>.
+    safe_path = escape(path)
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2405,7 +2689,7 @@ def render_404_page(path: str = "") -> str:
   <div class="e404-code">404</div>
   <div class="e404-msg">Page not found.<br>
     This stock may have been delisted, or the URL might be wrong.</div>
-  {f'<div class="e404-path">{path}</div>' if path else ""}
+  {f'<div class="e404-path">{safe_path}</div>' if path else ""}
   <div class="e404-links">
     <a href="/" class="e404-btn e404-btn-primary">← Dashboard</a>
     <a href="/stocks" class="e404-btn e404-btn-secondary">All Stocks</a>
@@ -3083,6 +3367,16 @@ def _momentum_html(s: dict) -> str:
     </div>"""
 
 def render_stock_page(s: dict) -> str:
+    # Defense in depth: `s` comes from generate.py's Yahoo Finance fetch.
+    # That data isn't directly attacker-controlled, but company names/
+    # tickers are still external input rendered into HTML attributes,
+    # <title>, and <meta> tags below — escape the string fields so a
+    # stray `<`, `"`, or `&` in upstream data can't break out of context.
+    s = dict(s)
+    for _field in ("name", "ticker", "sector", "consensus", "market_cap"):
+        if isinstance(s.get(_field), str):
+            s[_field] = str(escape(s[_field]))
+
     total_analysts = s["strong_buy"] + s["buy"] + s["hold"] + s["sell"] or 1
     bull_pct = round((s["strong_buy"] + s["buy"]) / total_analysts * 100)
     # Helper at top of render_stock_page — add these two lines after the bull_pct line:

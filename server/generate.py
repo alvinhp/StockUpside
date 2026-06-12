@@ -14,7 +14,7 @@ The server will serve the previous day's data while this script runs,
 then automatically pick up the new data on the next cache miss.
 """
 
-import json, sqlite3, time, datetime, os, random, urllib.request, sys
+import json, sqlite3, time, datetime, os, random, urllib.request, sys, signal
 
 import yfinance as yf
 
@@ -76,6 +76,16 @@ def init_db():
         days_later INTEGER NOT NULL, price_then REAL, price_now REAL,
         actual_return REAL, hit_target INTEGER, checked_date TEXT,
         UNIQUE(snapshot_date, ticker, days_later))""")
+    # Checkpoint table: stores per-ticker rows for the run currently in
+    # progress, keyed by run_date. If generate.py is killed (timeout,
+    # OOM, server restart, power loss, etc.) before finishing, the next
+    # run picks up exactly where it left off instead of starting over —
+    # and a partial merge into `cache` happens periodically so the site
+    # is never stuck on yesterday's data for the full 3+ hour run.
+    con.execute("""CREATE TABLE IF NOT EXISTS progress(
+        run_date TEXT NOT NULL, ticker TEXT NOT NULL,
+        row_json TEXT NOT NULL, ts INTEGER,
+        PRIMARY KEY (run_date, ticker))""")
     con.commit()
     con.close()
 
@@ -87,6 +97,51 @@ def save_cache(data: list):
     con.commit()
     con.close()
     print(f"  ✓  Saved {len(data)} stocks to cache for {today}")
+
+# ── Checkpointing ──────────────────────────────────────────────────────────────
+def load_progress(run_date: str) -> dict:
+    """Return {ticker: row_dict} for every ticker already processed in
+    today's run. Used to resume after a kill/timeout without redoing work."""
+    con = get_db()
+    rows = con.execute(
+        "SELECT ticker, row_json FROM progress WHERE run_date=?", (run_date,)
+    ).fetchall()
+    con.close()
+    return {ticker: json.loads(row_json) for ticker, row_json in rows}
+
+def save_progress_row(run_date: str, ticker: str, row: dict):
+    """Persist a single ticker's result immediately so it survives a crash."""
+    con = get_db()
+    con.execute(
+        "INSERT OR REPLACE INTO progress VALUES (?, ?, ?, ?)",
+        (run_date, ticker, json.dumps(row), int(time.time())),
+    )
+    con.commit()
+    con.close()
+
+def merge_progress_into_cache(run_date: str):
+    """Write everything processed so far into the live `cache` table so the
+    site can serve partial/fresher data while the run is still going.
+    Ranks are recomputed over the partial set."""
+    rows = list(load_progress(run_date).values())
+    if not rows:
+        return
+    rows = sorted(rows, key=lambda x: x["upside_pct"], reverse=True)
+    for i, r in enumerate(rows):
+        r["rank"] = i + 1
+    con = get_db()
+    con.execute("INSERT OR REPLACE INTO cache VALUES(?,?,?)",
+                (run_date, json.dumps(rows), int(time.time())))
+    con.commit()
+    con.close()
+    print(f"  ↻  Checkpoint: merged {len(rows)} stocks into cache for {run_date}")
+
+def clear_progress(run_date: str):
+    """Remove checkpoint rows for a completed run."""
+    con = get_db()
+    con.execute("DELETE FROM progress WHERE run_date=?", (run_date,))
+    con.commit()
+    con.close()
 
 def save_snapshot(stocks: list):
     today = datetime.date.today().isoformat()
@@ -251,7 +306,7 @@ def _fmt_cap(mc):
     return f"${mc/1e6:.0f}M"
 
 # ── Main generation ────────────────────────────────────────────────────────────
-def generate_stocks() -> list:
+def generate_stocks(run_date: str) -> list:
     # For production: use get_full_universe() (full SEC EDGAR list, ~3–6 hrs).
     # For development: use get_full_universe()[:500] or UNIVERSE_FALLBACK.
     tickers = get_full_universe()
@@ -260,19 +315,35 @@ def generate_stocks() -> list:
         tickers = UNIVERSE_FALLBACK
 
     # ── Uncomment ONE of the lines below to control scope ──
-    tickers = tickers[:2000]
+    # tickers = tickers[:2000]
     # tickers = tickers[:500]   # dev: ~30-60 min
     # tickers = tickers[:100]   # dev: ~5-10 min
     # (leave commented for full production run)
 
-    print(f"  →  Fetching analyst targets for {len(tickers)} tickers...")
-    rows = []
-    total = len(tickers)
-    rate_limit_streak = 0
+    # ── Resume support ──────────────────────────────────────────────────────
+    # If a previous run today was killed partway through (timeout, crash,
+    # restart), `progress` already has results for some tickers. Skip those
+    # and only fetch the remaining ones.
+    done = load_progress(run_date)
+    if done:
+        print(f"  ↻  Resuming: {len(done)} tickers already completed today, "
+              f"{len(tickers) - len(done)} remaining")
+        remaining_tickers = [t for t in tickers if t not in done]
+    else:
+        remaining_tickers = tickers
 
-    for i, ticker in enumerate(tickers):
+    print(f"  →  Fetching analyst targets for {len(remaining_tickers)} tickers "
+          f"({len(tickers)} total)...")
+    rows = list(done.values())
+    total = len(remaining_tickers)
+    rate_limit_streak = 0
+    CHECKPOINT_EVERY = 50  # merge into live cache every N newly-processed tickers
+    processed_since_checkpoint = 0
+
+    for i, ticker in enumerate(remaining_tickers):
         if i % 25 == 0:
-            print(f"  →  Progress: {i}/{total} ({len(rows)} valid so far)")
+            print(f"  →  Progress: {i}/{total} remaining "
+                  f"({len(done) + i} of {len(tickers)} total, {len(rows)} valid so far)")
 
         # 2 seconds per ticker keeps us safely under Yahoo's ~2000 req/hr limit
         time.sleep(0.5 + random.uniform(0.5, 2.0))
@@ -356,19 +427,8 @@ def generate_stocks() -> list:
                 "strong_buy": "Strong Buy", "buy": "Buy", "hold": "Hold",
                 "underperform": "Underperform", "sell": "Sell", "none": "Hold",
             }
-            # Prefer deriving consensus from actual vote counts so it matches
-            # what users see in the analyst breakdown bars. Yahoo's
-            # recommendationKey can disagree with the individual counts.
-            total_votes = sb + b + h + s
-            if total_votes > 0:
-                score = (sb * 1 + b * 2 + h * 3 + s * 4) / total_votes
-                if   score <= 1.5: consensus = "Strong Buy"
-                elif score <= 2.5: consensus = "Buy"
-                elif score <= 3.2: consensus = "Hold"
-                else:              consensus = "Underperform"
-            else:
-                consensus = consensus_map.get(
-                    (info.get("recommendationKey") or "none").lower(), "Hold")
+            consensus = consensus_map.get(
+                (info.get("recommendationKey") or "none").lower(), "Hold")
 
             momentum = get_momentum(ticker, consensus, analyst_count)
 
@@ -412,6 +472,14 @@ def generate_stocks() -> list:
                 momentum_history=momentum["history"],
             ))
 
+            # Checkpoint immediately — this single ticker's result survives
+            # even if the process is killed on the very next line.
+            save_progress_row(run_date, ticker, rows[-1])
+            processed_since_checkpoint += 1
+            if processed_since_checkpoint >= CHECKPOINT_EVERY:
+                merge_progress_into_cache(run_date)
+                processed_since_checkpoint = 0
+
         except Exception as e:
             print(f"  ⚠  Skipped {ticker} (parse error): {e}")
             continue
@@ -432,13 +500,58 @@ if __name__ == "__main__":
 
     init_db()
 
+    # Determine which "run" we're continuing. If there's unfinished progress
+    # from a prior run within the last 20 hours, resume that run_date instead
+    # of starting a new one for today — this handles a run that started just
+    # before midnight and got killed shortly after.
+    today = datetime.date.today().isoformat()
+    con = get_db()
+    existing = con.execute(
+        "SELECT run_date, MAX(ts) FROM progress GROUP BY run_date ORDER BY MAX(ts) DESC LIMIT 1"
+    ).fetchone()
+    con.close()
+
+    run_date = today
+    if existing and existing[0]:
+        prev_run_date, last_ts = existing
+        age_hours = (time.time() - (last_ts or 0)) / 3600
+        if age_hours < 20:
+            run_date = prev_run_date
+            print(f"  ↻  Found unfinished run from {run_date} "
+                  f"(last checkpoint {age_hours:.1f}h ago) — resuming it.")
+        else:
+            print(f"  →  Stale progress from {prev_run_date} ({age_hours:.1f}h old) "
+                  f"— ignoring, starting fresh run for {today}.")
+
+    # SIGTERM (e.g. systemd stop, timeout subprocess.terminate(), service
+    # restart) doesn't raise KeyboardInterrupt — without this handler the
+    # process would die mid-ticker with nothing beyond the last periodic
+    # checkpoint. Translate it into a clean, immediate partial merge + exit.
+    def _on_sigterm(signum, frame):
+        print(f"\n  ✗  Received signal {signum} — checkpointing before exit.")
+        merge_progress_into_cache(run_date)
+        print(f"  ↻  Partial progress saved — re-run to resume from where this left off.")
+        sys.exit(1)
+
+    signal.signal(signal.SIGTERM, _on_sigterm)
+
     try:
-        data = generate_stocks()
+        data = generate_stocks(run_date)
         if not data:
             print("  ✗  No stocks generated — aborting cache write.")
             sys.exit(1)
 
+        # Final write under TODAY's date (in case run_date was yesterday),
+        # then clean up the checkpoint table for the completed run.
         save_cache(data)
+        if run_date != today:
+            # Also remove the stale run_date row we wrote via checkpoints
+            con = get_db()
+            con.execute("DELETE FROM cache WHERE date=?", (run_date,))
+            con.commit()
+            con.close()
+        clear_progress(run_date)
+
         save_snapshot(data)
         check_performance()
 
@@ -449,7 +562,11 @@ if __name__ == "__main__":
 
     except KeyboardInterrupt:
         print("\n  ✗  Interrupted by user.")
+        merge_progress_into_cache(run_date)
+        print(f"  ↻  Partial progress saved — re-run to resume from where this left off.")
         sys.exit(1)
     except Exception as e:
         print(f"\n  ✗  Fatal error: {e}")
+        merge_progress_into_cache(run_date)
+        print(f"  ↻  Partial progress saved — re-run to resume from where this left off.")
         sys.exit(1)
