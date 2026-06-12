@@ -9,6 +9,7 @@ let filtered = [];
 let stats = null;
 let tier = "free";
 let proToken = localStorage.getItem("su_token") || "";
+let emailPrefs = null;
 let sortKey = "rank";
 let sortAsc = true;
 let secFilter = "All";
@@ -200,14 +201,17 @@ function renderAll() {
     ${tier === "free" ? emailBar() : ""}
     ${stats?.generating ? generatingBanner() : ""}
     <div class="sbar-desktop">${statsBar()}</div>
-    ${controls(sectors, countShow)}
+    <div class="ctrl-and-nav">
+      <div class="mobile-nav-tabs">${mobileNavTabs()}</div>
+      ${controls(sectors, countShow)}
+    </div>
     <div class="sbar-mobile">${statsBarMobile()}</div>
-    <div class="mobile-nav-tabs">${mobileNavTabs()}</div>
     <div class="tbl-wrap">${table()}</div>
     <div id="pgn-container">${pagination()}</div>
     ${momentumNote()}
     ${footer()}
     ${paywallModal()}
+    ${tier === "pro" ? emailPrefsModal() : ""}
     
     <div id="toast-el" class="toast hidden"></div>`;
     bindGlobals();
@@ -233,7 +237,7 @@ function header() {
         <span id="cd" class="cd">--:--:--</span>
       </div>
       ${tier === "pro"
-        ? `<div class="pro-chip">✦ PRO</div>`
+        ? `<button class="btn-emailprefs" id="btn-emailprefs">✉ Digest Settings</button><div class="pro-chip">✦ PRO</div>`
         : `<button class="btn-login" id="btn-login">Log In</button><button class="btn-pro" id="btn-paywall">Unlock Pro →</button>`}
     </div>
   </header>`;
@@ -600,6 +604,83 @@ function footer() {
   </footer>`;
 }
 // ── Paywall modal ──────────────────────────────────────────────────────────────
+function emailPrefsModal() {
+    const sectors = stats ? Object.keys(stats.sectors).sort() : [];
+    const p = emailPrefs || { sector: "All", consensus: "All", min_analysts: 0, max_pe: 0, max_peg: 0, momentum: "All" };
+    const cons = ["All", "Strong Buy", "Buy", "Hold", "Underperform"];
+    return `<div id="ep" class="modal-bg hidden">
+    <div class="modal modal-narrow" role="dialog">
+      <button class="modal-x" id="ep-close">✕</button>
+      <div class="pw-head">
+        <div class="pw-mark">✉</div>
+        <h2>Weekly Digest Settings</h2>
+        <p>Every Monday we'll email your Top 10 picks. Set filters below to
+           get picks tailored to your strategy — leave as "Any" for the
+           overall Top 10.</p>
+      </div>
+      <div class="ep-form">
+        <div class="ep-row">
+          <div class="flt-g"><label class="flt-lbl">SECTOR</label>
+            <select class="flt-sel" id="ep-sector">
+              <option value="All"${p.sector === "All" ? " selected" : ""}>All Sectors</option>
+              ${sectors.map(s => `<option value="${s}"${p.sector === s ? " selected" : ""}>${s}</option>`).join("")}
+            </select>
+          </div>
+          <div class="flt-g"><label class="flt-lbl">CONSENSUS</label>
+            <select class="flt-sel" id="ep-consensus">
+              ${cons.map(c => `<option value="${c}"${p.consensus === c ? " selected" : ""}>${c}</option>`).join("")}
+            </select>
+          </div>
+        </div>
+        <div class="ep-row">
+          <div class="flt-g"><label class="flt-lbl">MIN ANALYSTS</label>
+            <select class="flt-sel" id="ep-analysts">
+              <option value="0"${p.min_analysts === 0 ? " selected" : ""}>Any</option>
+              <option value="2"${p.min_analysts === 2 ? " selected" : ""}>2+</option>
+              <option value="5"${p.min_analysts === 5 ? " selected" : ""}>5+</option>
+              <option value="10"${p.min_analysts === 10 ? " selected" : ""}>10+</option>
+              <option value="15"${p.min_analysts === 15 ? " selected" : ""}>15+</option>
+              <option value="25"${p.min_analysts === 25 ? " selected" : ""}>25+</option>
+            </select>
+          </div>
+          <div class="flt-g"><label class="flt-lbl">MAX P/E</label>
+            <select class="flt-sel" id="ep-pe">
+              <option value="0"${p.max_pe === 0 ? " selected" : ""}>Any</option>
+              <option value="10"${p.max_pe === 10 ? " selected" : ""}>≤10</option>
+              <option value="15"${p.max_pe === 15 ? " selected" : ""}>≤15</option>
+              <option value="20"${p.max_pe === 20 ? " selected" : ""}>≤20</option>
+              <option value="35"${p.max_pe === 35 ? " selected" : ""}>≤35</option>
+              <option value="50"${p.max_pe === 50 ? " selected" : ""}>≤50</option>
+            </select>
+          </div>
+        </div>
+        <div class="ep-row">
+          <div class="flt-g"><label class="flt-lbl">MAX PEG</label>
+            <select class="flt-sel" id="ep-peg">
+              <option value="0"${p.max_peg === 0 ? " selected" : ""}>Any</option>
+              <option value="0.5"${p.max_peg === 0.5 ? " selected" : ""}>≤0.5</option>
+              <option value="1"${p.max_peg === 1 ? " selected" : ""}>≤1.0</option>
+              <option value="1.5"${p.max_peg === 1.5 ? " selected" : ""}>≤1.5</option>
+              <option value="2"${p.max_peg === 2 ? " selected" : ""}>≤2.0</option>
+            </select>
+          </div>
+          <div class="flt-g"><label class="flt-lbl">MOMENTUM</label>
+            <select class="flt-sel" id="ep-momentum">
+              <option value="All"${p.momentum === "All" ? " selected" : ""}>Any</option>
+              <option value="up"${p.momentum === "up" ? " selected" : ""}>↑ Improving</option>
+              <option value="neutral"${p.momentum === "neutral" ? " selected" : ""}>→ Neutral</option>
+              <option value="down"${p.momentum === "down" ? " selected" : ""}>↓ Weakening</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div id="ep-match-info" class="ep-match-info"></div>
+      <button class="btn-sub" id="ep-save">Save Preferences</button>
+      <div class="pw-foot">Applies to next Monday's digest. If no stocks
+        match your filters that week, we'll send the overall Top 10 instead.</div>
+    </div>
+  </div>`;
+}
 function paywallModal() {
     return `<div id="pw" class="modal-bg hidden">
     <div class="modal" role="dialog">
@@ -709,6 +790,36 @@ function showPW() {
     if (el)
         el.classList.remove("hidden");
 }
+async function showEP() {
+    const el = document.getElementById("ep");
+    if (!el)
+        return;
+    el.classList.remove("hidden");
+    // Load current prefs from server (in case they were set on another device)
+    try {
+        const r = await fetch(`${API}/email-prefs?token=${encodeURIComponent(proToken)}`);
+        const d = await r.json();
+        if (d.prefs) {
+            emailPrefs = d.prefs;
+            renderEPModal();
+        }
+    }
+    catch {
+        // Non-fatal — modal still shows defaults/cached values
+    }
+}
+function renderEPModal() {
+    const el = document.getElementById("ep");
+    if (!el)
+        return;
+    // emailPrefsModal() returns the full `<div id="ep" ...>...</div>` wrapper —
+    // replace just the inner content so the #ep element itself stays in the DOM
+    const html = emailPrefsModal();
+    const start = html.indexOf(">") + 1;
+    const end = html.lastIndexOf("</div>");
+    el.innerHTML = html.slice(start, end);
+    bindEmailPrefs();
+}
 function toast(msg, type) {
     const el = document.getElementById("toast-el");
     if (!el)
@@ -788,6 +899,66 @@ function bindPagination() {
         });
     });
 }
+function bindEmailPrefs() {
+    const closeBtn = document.getElementById("ep-close");
+    if (closeBtn)
+        closeBtn.onclick = () => closeModal("ep");
+    document.getElementById("ep")?.addEventListener("click", e => {
+        if (e.target.id === "ep")
+            closeModal("ep");
+    });
+    const saveBtn = document.getElementById("ep-save");
+    if (!saveBtn)
+        return;
+    saveBtn.onclick = async () => {
+        const sector = document.getElementById("ep-sector")?.value || "All";
+        const consensus = document.getElementById("ep-consensus")?.value || "All";
+        const minA = parseInt(document.getElementById("ep-analysts")?.value || "0");
+        const maxPe = parseFloat(document.getElementById("ep-pe")?.value || "0");
+        const maxPeg = parseFloat(document.getElementById("ep-peg")?.value || "0");
+        const momentum = document.getElementById("ep-momentum")?.value || "All";
+        const prefs = {
+            sector, consensus, min_analysts: minA,
+            max_pe: maxPe, max_peg: maxPeg, momentum,
+        };
+        saveBtn.disabled = true;
+        saveBtn.textContent = "Saving…";
+        const infoEl = document.getElementById("ep-match-info");
+        try {
+            const r = await fetch(`${API}/email-prefs`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ token: proToken, prefs }),
+            });
+            const d = await r.json();
+            if (d.success) {
+                emailPrefs = d.prefs;
+                const n = d.matching_stocks ?? 0;
+                if (infoEl) {
+                    if (n === 0) {
+                        infoEl.innerHTML = `⚠ No stocks currently match these filters — we'll send the overall Top 10 instead until something matches.`;
+                        infoEl.className = "ep-match-info ep-match-warn";
+                    }
+                    else {
+                        infoEl.innerHTML = `✓ ${n} stock${n === 1 ? "" : "s"} currently match — your Monday digest will pick the top ${Math.min(10, n)} of these.`;
+                        infoEl.className = "ep-match-info ep-match-ok";
+                    }
+                }
+                toast("Digest preferences saved", "ok");
+            }
+            else {
+                toast(d.error || "Could not save preferences", "err");
+            }
+        }
+        catch {
+            toast("Could not connect", "err");
+        }
+        finally {
+            saveBtn.disabled = false;
+            saveBtn.textContent = "Save Preferences";
+        }
+    };
+}
 function bindRows() {
     document.querySelectorAll(".tr-stock").forEach(tr => {
         tr.onclick = (e) => {
@@ -856,6 +1027,12 @@ function bindGlobals() {
         if (e.target.id === "pw")
             closeModal("pw");
     });
+    // Email digest preferences (Pro only)
+    const bEP = document.getElementById("btn-emailprefs");
+    if (bEP)
+        bEP.onclick = showEP;
+    if (document.getElementById("ep"))
+        bindEmailPrefs();
     // Subscribe
     const subBtn = document.getElementById("pw-sub");
     if (subBtn)
