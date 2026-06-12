@@ -298,7 +298,7 @@ select, input { font-family: var(--font-sans); }
 .tr-locked:hover { background:var(--bg3);opacity:.9; }
 
 .tbl td {
-  padding:7px 12px;
+  padding:10px 14px;
   border-bottom:1px solid var(--border);
   border-right:1px solid var(--border);
   white-space:nowrap; vertical-align:middle;
