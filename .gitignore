@@ -1,3 +1,4 @@
 server/cache.db
 server/generate.log
 server/*.log
+.env

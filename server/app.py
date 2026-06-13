@@ -2182,12 +2182,16 @@ def api_subscribe_free():
 
     # Send welcome email to genuinely new subscribers only
     if is_new:
-        threading.Thread(
-            target=send_email,
-            args=(addr, "▲ You're on the StockUpside.io list!",
-                  welcome_email_html(addr)),
-            daemon=True,
-        ).start()
+        def _send_welcome():
+            try:
+                ok = send_email(addr, "▲ You're on the StockUpside.io list!",
+                                 welcome_email_html(addr))
+                print(f"  [WELCOME EMAIL] to={addr} result={ok}")
+            except Exception as e:
+                import traceback
+                print(f"  ⚠  Welcome email thread crashed for {addr}: {e}")
+                traceback.print_exc()
+        threading.Thread(target=_send_welcome, daemon=True).start()
 
     return jsonify({"success": True, "message": "You're on the list!"})
 
