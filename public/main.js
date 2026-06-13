@@ -28,6 +28,7 @@ let sortAsc = true;
 let secFilter = "All";
 let conFilter = "All";
 let minAnalysts = 0;
+let minMarketCap = 0; // raw USD; 0 = no filter
 let maxPE = 0; // 0 = no filter
 let maxPEG = 0; // 0 = no filter
 let momentumFilter = "All"; // All | up | down | neutral
@@ -92,6 +93,12 @@ async function load() {
         all = sd.stocks;
         tier = sd.tier;
         stats = st;
+        // Reflect the server-applied default filters on the free tier so the
+        // dropdowns show what's actually being filtered (locked/disabled).
+        if (tier !== "pro" && sd.free_filters) {
+            minMarketCap = sd.free_filters.min_market_cap;
+            minAnalysts = sd.free_filters.min_analysts;
+        }
         applyFilters();
         setLoader(false);
         renderAll();
@@ -168,6 +175,8 @@ function applyFilters() {
         s = s.filter(x => x.locked || x.consensus === conFilter);
     if (minAnalysts > 0)
         s = s.filter(x => x.locked || x.analyst_count >= minAnalysts);
+    if (minMarketCap > 0)
+        s = s.filter(x => x.locked || (x.market_cap_raw ?? 0) >= minMarketCap);
     if (maxPE > 0)
         s = s.filter(x => x.locked || (x.pe_ratio > 0 && x.pe_ratio <= maxPE));
     if (maxPEG > 0)
@@ -346,8 +355,17 @@ function controls(sectors, count) {
           ${cons.map(c => `<option value="${c}"${conFilter === c ? " selected" : ""}>${c}</option>`).join("")}
         </select>
       </div>
-      <div class="flt-g"><label class="flt-lbl">MIN ANALYSTS</label>
-        <select class="flt-sel" id="flt-analysts">
+      <div class="flt-g"><label class="flt-lbl">MARKET CAP${tier !== "pro" ? ` <span class="flt-lock" title="Free tier default — upgrade to Pro to change">🔒</span>` : ""}</label>
+        <select class="flt-sel" id="flt-mcap"${tier !== "pro" ? " disabled" : ""}>
+          <option value="0"${minMarketCap === 0 ? " selected" : ""}>Any (Nano+)</option>
+          <option value="50000000"${minMarketCap === 50000000 ? " selected" : ""}>Micro+ (&gt;$50M)</option>
+          <option value="250000000"${minMarketCap === 250000000 ? " selected" : ""}>Small+ (&gt;$250M)</option>
+          <option value="2000000000"${minMarketCap === 2000000000 ? " selected" : ""}>Mid+ (&gt;$2B)</option>
+          <option value="10000000000"${minMarketCap === 10000000000 ? " selected" : ""}>Large+ (&gt;$10B)</option>
+        </select>
+      </div>
+      <div class="flt-g"><label class="flt-lbl">MIN ANALYSTS${tier !== "pro" ? ` <span class="flt-lock" title="Free tier default — upgrade to Pro to change">🔒</span>` : ""}</label>
+        <select class="flt-sel" id="flt-analysts"${tier !== "pro" ? " disabled" : ""}>
           <option value="0"${minAnalysts === 0 ? " selected" : ""}>Any</option>
           <option value="2"${minAnalysts === 2 ? " selected" : ""}>2+</option>
           <option value="5"${minAnalysts === 5 ? " selected" : ""}>5+</option>
@@ -1101,6 +1119,10 @@ function bindGlobals() {
     const fCon = document.getElementById("flt-con");
     if (fCon)
         fCon.onchange = () => { conFilter = fCon.value; currentPage = 1; applyFilters(); renderRows(); };
+    // Market cap filter (Pro only — disabled for free tier)
+    const fMcap = document.getElementById("flt-mcap");
+    if (fMcap)
+        fMcap.onchange = () => { minMarketCap = parseFloat(fMcap.value); currentPage = 1; applyFilters(); renderRows(); };
     // Analyst count filter
     const fAnalysts = document.getElementById("flt-analysts");
     if (fAnalysts)

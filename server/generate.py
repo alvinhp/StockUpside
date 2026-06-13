@@ -501,6 +501,7 @@ def fetch_ticker_row(ticker: str) -> dict | None:
             consensus=consensus,
             strong_buy=sb, buy=b, hold=h, sell=s,
             market_cap=_fmt_cap(info.get("marketCap") or 0),
+            market_cap_raw=info.get("marketCap") or 0,
             pe_ratio=round(info.get("trailingPE") or 0, 1),
             ytd_change=ytd_change,
             week52_low=round(info.get("fiftyTwoWeekLow")  or 0, 2),
@@ -558,7 +559,7 @@ def generate_stocks(run_date: str) -> list:
     # back off together rather than one thread pausing while others keep
     # hammering. If you see sustained rate-limiting in generate.log, drop
     # MAX_WORKERS to 2 or 1.
-    MAX_WORKERS = 4
+    MAX_WORKERS = 5
 
     print(f"  →  Fetching analyst targets for {len(remaining_tickers)} tickers "
           f"({len(tickers)} total) with {MAX_WORKERS} concurrent workers...")

@@ -24,7 +24,7 @@ interface Stock {
   current_price: number; target_price: number; upside_pct: number;
   high_target: number; low_target: number; analyst_count: number;
   consensus: string; strong_buy: number; buy: number; hold: number;
-  sell: number; market_cap: string; pe_ratio: number; ytd_change: number;
+  sell: number; market_cap: string; market_cap_raw?: number; pe_ratio: number; ytd_change: number;
   week52_low: number; week52_high: number; avg_volume: number;
   last_updated: string; locked?: boolean;
   momentum_trend: "up" | "down" | "neutral";
@@ -33,7 +33,7 @@ interface Stock {
   peg_ratio: number;
   forward_pe: number;
 }
-interface ApiResp  { stocks: Stock[]; total: number; tier: string; last_updated: string; next_update: string; }
+interface ApiResp  { stocks: Stock[]; total: number; tier: string; last_updated: string; next_update: string; free_filters?: {min_market_cap:number; min_analysts:number}; }
 interface StatsResp { total_stocks: number; avg_upside: number; top_upside: number;
                       strong_buy_count: number;
                       sectors: Record<string,{count:number;avg_upside:number}>;
@@ -58,6 +58,7 @@ let sortAsc   = true;
 let secFilter    = "All";
 let conFilter    = "All";
 let minAnalysts  = 0;
+let minMarketCap = 0;   // raw USD; 0 = no filter
 let maxPE        = 0;   // 0 = no filter
 let maxPEG       = 0;   // 0 = no filter
 let momentumFilter = "All"; // All | up | down | neutral
@@ -109,6 +110,12 @@ async function load() {
     const sd: ApiResp   = await sr.json();
     const st: StatsResp = await str.json();
     all = sd.stocks; tier = sd.tier; stats = st;
+    // Reflect the server-applied default filters on the free tier so the
+    // dropdowns show what's actually being filtered (locked/disabled).
+    if (tier !== "pro" && sd.free_filters) {
+      minMarketCap = sd.free_filters.min_market_cap;
+      minAnalysts  = sd.free_filters.min_analysts;
+    }
     applyFilters(); setLoader(false); renderAll();
     fixStickyOffset();
     startTicker();
@@ -179,6 +186,7 @@ function applyFilters() {
   if (secFilter !== "All") s = s.filter(x => x.locked || x.sector === secFilter);
   if (conFilter !== "All") s = s.filter(x => x.locked || x.consensus === conFilter);
   if (minAnalysts > 0)    s = s.filter(x => x.locked || x.analyst_count >= minAnalysts);
+  if (minMarketCap > 0)   s = s.filter(x => x.locked || (x.market_cap_raw ?? 0) >= minMarketCap);
   if (maxPE > 0)          s = s.filter(x => x.locked || (x.pe_ratio > 0 && x.pe_ratio <= maxPE));
   if (maxPEG > 0)         s = s.filter(x => x.locked || (x.peg_ratio > 0 && x.peg_ratio <= maxPEG));
   if (momentumFilter !== "All") s = s.filter(x => x.locked || x.momentum_trend === momentumFilter);
@@ -360,8 +368,17 @@ function controls(sectors: string[], count: number) {
           ${cons.map(c=>`<option value="${c}"${conFilter===c?" selected":""}>${c}</option>`).join("")}
         </select>
       </div>
-      <div class="flt-g"><label class="flt-lbl">MIN ANALYSTS</label>
-        <select class="flt-sel" id="flt-analysts">
+      <div class="flt-g"><label class="flt-lbl">MARKET CAP${tier!=="pro"?` <span class="flt-lock" title="Free tier default — upgrade to Pro to change">🔒</span>`:""}</label>
+        <select class="flt-sel" id="flt-mcap"${tier!=="pro"?" disabled":""}>
+          <option value="0"${minMarketCap===0?" selected":""}>Any (Nano+)</option>
+          <option value="50000000"${minMarketCap===50000000?" selected":""}>Micro+ (&gt;$50M)</option>
+          <option value="250000000"${minMarketCap===250000000?" selected":""}>Small+ (&gt;$250M)</option>
+          <option value="2000000000"${minMarketCap===2000000000?" selected":""}>Mid+ (&gt;$2B)</option>
+          <option value="10000000000"${minMarketCap===10000000000?" selected":""}>Large+ (&gt;$10B)</option>
+        </select>
+      </div>
+      <div class="flt-g"><label class="flt-lbl">MIN ANALYSTS${tier!=="pro"?` <span class="flt-lock" title="Free tier default — upgrade to Pro to change">🔒</span>`:""}</label>
+        <select class="flt-sel" id="flt-analysts"${tier!=="pro"?" disabled":""}>
           <option value="0"${minAnalysts===0?" selected":""}>Any</option>
           <option value="2"${minAnalysts===2?" selected":""}>2+</option>
           <option value="5"${minAnalysts===5?" selected":""}>5+</option>
@@ -1093,6 +1110,10 @@ if (subBtn) subBtn.onclick = async () => {
   // Consensus filter
   const fCon = document.getElementById("flt-con") as HTMLSelectElement;
   if (fCon) fCon.onchange = () => { conFilter=fCon.value; currentPage=1; applyFilters(); renderRows(); };
+
+  // Market cap filter (Pro only — disabled for free tier)
+  const fMcap = document.getElementById("flt-mcap") as HTMLSelectElement;
+  if (fMcap) fMcap.onchange = () => { minMarketCap=parseFloat(fMcap.value); currentPage=1; applyFilters(); renderRows(); };
 
   // Analyst count filter
   const fAnalysts = document.getElementById("flt-analysts") as HTMLSelectElement;

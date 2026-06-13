@@ -1942,6 +1942,22 @@ def digest_email_html(stocks: list, email_addr: str, prefs: dict | None = None) 
     return subject, html, text
 
 
+# ── Market cap tiers (raw USD thresholds) ───────────────────────────────────
+MARKET_CAP_TIERS = {
+    "nano":   0,
+    "micro":  50_000_000,
+    "small":  250_000_000,
+    "mid":    2_000_000_000,
+    "large":  10_000_000_000,
+}
+
+# Defaults applied to the FREE tier's top-10 so low-quality/high-risk
+# nano/micro caps with thin analyst coverage don't dominate the free list.
+# Pro users can adjust both filters; these are just the free-tier baseline.
+FREE_DEFAULT_MIN_MARKET_CAP = MARKET_CAP_TIERS["small"]  # >$250M
+FREE_DEFAULT_MIN_ANALYSTS   = 5
+
+
 # ── API Routes ─────────────────────────────────────────────────────────────────
 @app.route("/api/stocks")
 @limiter.limit("600 per hour")
@@ -1972,13 +1988,31 @@ def api_stocks():
                         "tier": "pro", "last_updated": today.isoformat(),
                         "next_update": nxt})
 
-    free   = stocks[:10]
+    # Free tier: apply default quality filters (min market cap + min
+    # analyst coverage) so high-risk, thinly-covered nano/micro caps don't
+    # dominate the free top-10. Original global `rank` is preserved so
+    # free users see where these stocks actually rank overall.
+    min_cap      = FREE_DEFAULT_MIN_MARKET_CAP
+    min_analysts = FREE_DEFAULT_MIN_ANALYSTS
+
+    eligible = [
+        s for s in stocks
+        if (s.get("market_cap_raw") or 0) >= min_cap
+        and (s.get("analyst_count") or 0) >= min_analysts
+    ]
+
+    free_set   = eligible[:10]
+    free_idx   = {s["ticker"] for s in free_set}
+    remainder  = [s for s in stocks if s["ticker"] not in free_idx]
+
     teaser = [{"rank": s["rank"], "ticker": "???", "name": "Unlock Pro to reveal",
                "upside_pct": s["upside_pct"], "consensus": s["consensus"],
-               "sector": s["sector"], "locked": True} for s in stocks[10:]]
-    return jsonify({"stocks": free + teaser, "total": len(stocks),
+               "sector": s["sector"], "locked": True} for s in remainder]
+    return jsonify({"stocks": free_set + teaser, "total": len(stocks),
                     "tier": "free", "last_updated": today.isoformat(),
-                    "next_update": nxt})
+                    "next_update": nxt,
+                    "free_filters": {"min_market_cap": min_cap,
+                                     "min_analysts": min_analysts}})
 
 @app.route("/api/stats")
 @limiter.limit("600 per hour")
@@ -2183,17 +2217,12 @@ def api_subscribe_free():
 
     # Send welcome email to genuinely new subscribers only
     if is_new:
-        def _send_welcome():
-            print(f"  [WELCOME EMAIL] thread started for {addr}")
-            try:
-                ok = send_email(addr, "▲ You're on the StockUpside.io list!",
-                                 welcome_email_html(addr))
-                print(f"  [WELCOME EMAIL] to={addr} result={ok}")
-            except Exception as e:
-                import traceback
-                print(f"  ⚠  Welcome email thread crashed for {addr}: {e}")
-                traceback.print_exc()
-        threading.Thread(target=_send_welcome, daemon=True).start()
+        threading.Thread(
+            target=send_email,
+            args=(addr, "▲ You're on the StockUpside.io list!",
+                  welcome_email_html(addr)),
+            daemon=True,
+        ).start()
 
     return jsonify({"success": True, "message": "You're on the list!"})
 

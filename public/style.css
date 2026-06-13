@@ -240,6 +240,8 @@ select, input { font-family: var(--font-sans); }
 }
 .flt-sel:focus { border-color:var(--accent); }
 .flt-sel option { background:var(--bg3); }
+.flt-sel:disabled { opacity:.55;cursor:not-allowed; }
+.flt-lock { font-size:9px;cursor:help; }
 
 .res-cnt {
   font-size:12px;color:var(--text2);white-space:nowrap;margin-left:4px;
