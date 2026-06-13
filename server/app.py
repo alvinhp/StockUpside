@@ -1589,6 +1589,7 @@ def _send_via_resend(to: str, subject: str, html: str, text: str = "") -> bool:
         headers={
             "Authorization": f"Bearer {_RESEND_API_KEY}",
             "Content-Type": "application/json",
+            "User-Agent": "StockUpside.io/1.0 (+https://stockupside.io)",
         },
     )
     try:
