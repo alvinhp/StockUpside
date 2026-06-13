@@ -88,6 +88,37 @@ def init_db():
         run_date TEXT NOT NULL, ticker TEXT NOT NULL,
         row_json TEXT NOT NULL, ts INTEGER,
         PRIMARY KEY (run_date, ticker))""")
+
+    # ── One-time migration: purge stale snapshots ───────────────────────────
+    # Until this fix, `consensus` was derived from Yahoo's recommendationKey,
+    # which could disagree with the actual sb/b/h/s vote breakdown (e.g.
+    # recommendationKey="hold" with 1 Strong Buy + 7 Buy and 0 Hold/Sell).
+    # generate_stocks() now derives consensus from the vote counts instead,
+    # but `snapshots` written under the old logic have incorrect consensus
+    # values baked in. get_momentum() compares today's (correct) consensus
+    # against these stale baselines, producing false "upgrade"/"downgrade"
+    # signals (e.g. a fabricated "Hold → Strong Buy" for a stock whose
+    # rating hasn't actually changed).
+    #
+    # We can't recompute the historical consensus (vote breakdowns weren't
+    # stored), so the only correct fix is to purge old snapshots — momentum
+    # will repopulate naturally over the next 7/30/90 days using correct
+    # values. This runs once, gated by a flag in `meta`.
+    con.execute("""CREATE TABLE IF NOT EXISTS meta(
+        key TEXT PRIMARY KEY, value TEXT)""")
+    migrated = con.execute(
+        "SELECT value FROM meta WHERE key='snapshots_consensus_fix_v1'"
+    ).fetchone()
+    if not migrated:
+        today = datetime.date.today().isoformat()
+        cur = con.execute("DELETE FROM snapshots WHERE date < ?", (today,))
+        con.execute(
+            "INSERT OR REPLACE INTO meta VALUES ('snapshots_consensus_fix_v1', ?)",
+            (today,),
+        )
+        print(f"  ↻  One-time migration: purged {cur.rowcount} stale snapshot "
+              f"row(s) from before the consensus-derivation fix")
+
     con.commit()
     con.close()
 
@@ -430,8 +461,21 @@ def fetch_ticker_row(ticker: str) -> dict | None:
             "strong_buy": "Strong Buy", "buy": "Buy", "hold": "Hold",
             "underperform": "Underperform", "sell": "Sell", "none": "Hold",
         }
-        consensus = consensus_map.get(
-            (info.get("recommendationKey") or "none").lower(), "Hold")
+        # Derive consensus from the actual sb/b/h/s vote counts so the
+        # label always matches the breakdown bars shown to users. Yahoo's
+        # recommendationKey can disagree with the individual counts (e.g.
+        # recommendationKey="hold" while the breakdown is 1 Strong Buy +
+        # 7 Buy, 0 Hold, 0 Sell — clearly not a "Hold").
+        total_votes = sb + b + h + s
+        if total_votes > 0:
+            score = (sb * 1 + b * 2 + h * 3 + s * 4) / total_votes
+            if   score <= 1.5: consensus = "Strong Buy"
+            elif score <= 2.5: consensus = "Buy"
+            elif score <= 3.2: consensus = "Hold"
+            else:              consensus = "Underperform"
+        else:
+            consensus = consensus_map.get(
+                (info.get("recommendationKey") or "none").lower(), "Hold")
 
         momentum = get_momentum(ticker, consensus, analyst_count)
 

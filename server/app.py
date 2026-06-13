@@ -14,6 +14,7 @@ from flask_limiter.util import get_remote_address
 import yfinance as yf
 import pandas as pd
 import urllib.request
+import urllib.error
 import csv
 import io
 import threading
@@ -1542,13 +1543,70 @@ _SMTP_PASS  = os.environ.get("SMTP_PASS",  "")
 _EMAIL_FROM = os.environ.get("EMAIL_FROM", "hello@stockupside.io")
 _SITE_URL   = os.environ.get("ALLOWED_ORIGIN", "https://stockupside.io")
 
+# Resend (https://resend.com) — preferred email provider. Uses their HTTP
+# API (no SMTP connection overhead, better deliverability diagnostics).
+# Get an API key from https://resend.com/api-keys and verify your sending
+# domain at https://resend.com/domains before setting this.
+_RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+_RESEND_API_URL = "https://api.resend.com/emails"
+
 
 def send_email(to: str, subject: str, html: str, text: str = "") -> bool:
     """Send a single email. Returns True on success, False on failure.
-    Falls back to stdout if SMTP is not configured (dev mode)."""
-    if not _SMTP_HOST:
-        print(f"  [EMAIL DEV] To: {to} | Subject: {subject}")
-        return True
+
+    Provider priority:
+      1. Resend HTTP API (if RESEND_API_KEY is set) — recommended.
+      2. Generic SMTP (if SMTP_HOST is set) — works with Resend's SMTP
+         relay too (smtp.resend.com, port 587, user "resend",
+         password = your API key) if you'd rather not use the HTTP API.
+      3. Dev mode (neither configured) — logs to stdout, returns True so
+         the calling code's flow (digest counts, etc.) isn't affected.
+    """
+    if _RESEND_API_KEY:
+        return _send_via_resend(to, subject, html, text)
+    if _SMTP_HOST:
+        return _send_via_smtp(to, subject, html, text)
+
+    print(f"  [EMAIL DEV] To: {to} | Subject: {subject}")
+    return True
+
+
+def _send_via_resend(to: str, subject: str, html: str, text: str = "") -> bool:
+    """Send via Resend's HTTP API: https://resend.com/docs/api-reference/emails/send-email"""
+    payload = {
+        "from": _EMAIL_FROM,
+        "to": [to],
+        "subject": subject,
+        "html": html,
+    }
+    if text:
+        payload["text"] = text
+
+    req = urllib.request.Request(
+        _RESEND_API_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {_RESEND_API_KEY}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            if 200 <= resp.status < 300:
+                return True
+            print(f"  ⚠  Resend returned HTTP {resp.status} for {to}")
+            return False
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")
+        print(f"  ⚠  Resend error sending to {to}: HTTP {e.code} — {body}")
+        return False
+    except Exception as e:
+        print(f"  ⚠  Resend request failed for {to}: {e}")
+        return False
+
+
+def _send_via_smtp(to: str, subject: str, html: str, text: str = "") -> bool:
     try:
         msg = email.mime.multipart.MIMEMultipart("alternative")
         msg["Subject"] = subject
