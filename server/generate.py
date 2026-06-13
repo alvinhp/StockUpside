@@ -15,6 +15,8 @@ then automatically pick up the new data on the next cache miss.
 """
 
 import json, sqlite3, time, datetime, os, random, urllib.request, sys, signal
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 import yfinance as yf
 
@@ -305,9 +307,180 @@ def _fmt_cap(mc):
     if mc >= 1e9:  return f"${mc/1e9:.0f}B"
     return f"${mc/1e6:.0f}M"
 
-# ── Main generation ────────────────────────────────────────────────────────────
+# ── Shared rate-limit backoff state ─────────────────────────────────────────
+# Several worker threads call Yahoo Finance concurrently. If ANY of them gets
+# rate-limited, we want ALL workers to back off together — otherwise one
+# thread sleeping 30s while two others keep hammering defeats the point.
+_rate_limit_lock = threading.Lock()
+_rate_limit_streak = 0
+_rate_limit_pause_until = 0.0  # monotonic time; workers sleep until this passes
+
+def _wait_for_shared_pause():
+    """Block until any shared rate-limit pause (set by another worker) expires."""
+    while True:
+        with _rate_limit_lock:
+            remaining = _rate_limit_pause_until - time.monotonic()
+        if remaining <= 0:
+            return
+        time.sleep(min(remaining, 5))
+
+def _register_rate_limit():
+    """Called when a worker hits a rate limit. Escalates a SHARED pause that
+    all worker threads will wait out, so the whole pool backs off together."""
+    global _rate_limit_streak, _rate_limit_pause_until
+    with _rate_limit_lock:
+        _rate_limit_streak += 1
+        streak = _rate_limit_streak
+        wait = min(60, 10 * streak) + random.uniform(0, 5)
+        if streak >= 5:
+            wait = 60 + random.uniform(0, 10)
+            _rate_limit_streak = 0
+        _rate_limit_pause_until = max(_rate_limit_pause_until, time.monotonic() + wait)
+        return wait, streak
+
+def _register_rate_limit_ok():
+    global _rate_limit_streak
+    with _rate_limit_lock:
+        _rate_limit_streak = 0
+
+
+def fetch_ticker_row(ticker: str) -> dict | None:
+    """Fetch and parse one ticker. Returns a row dict, or None if the
+    ticker should be skipped (no valid analyst target, rate-limited out
+    of retries, etc.). Designed to be called from a worker thread —
+    rate-limit backoff is coordinated across threads via the shared
+    state above.
+    """
+    # Small jitter even on the happy path, per-thread, so N workers don't
+    # all hit Yahoo in lockstep every loop iteration.
+    time.sleep(0.3 + random.uniform(0.2, 0.8))
+
+    retries = 3
+    info = None
+    t_obj = None
+    for attempt in range(retries):
+        _wait_for_shared_pause()
+        try:
+            t_obj = yf.Ticker(ticker)
+            info  = t_obj.info
+            if info and len(info) < 10:
+                raise ValueError("Stub response — likely rate limited")
+            _register_rate_limit_ok()
+            break
+        except Exception as e:
+            err = str(e)
+            if "Too Many Requests" in err or "Rate limited" in err or "Stub response" in err:
+                wait, streak = _register_rate_limit()
+                print(f"  ⚠  Rate limited ({ticker}), shared pause {wait:.0f}s "
+                      f"(streak: {streak})")
+                _wait_for_shared_pause()
+            else:
+                print(f"  ⚠  Skipped {ticker}: {e}")
+                break
+
+    if not info or len(info) < 10 or t_obj is None:
+        return None
+
+    try:
+        current_price = info.get("currentPrice") or info.get("regularMarketPrice") or 0
+        target_price  = info.get("targetMeanPrice") or 0
+        analyst_count = info.get("numberOfAnalystOpinions") or 0
+
+        if current_price <= 0 or target_price <= 0 or analyst_count < 2:
+            return None
+
+        upside_pct = round((target_price / current_price - 1) * 100, 1)
+        if upside_pct < 0:
+            return None
+
+        high_target = info.get("targetHighPrice") or 0
+        low_target  = info.get("targetLowPrice")  or 0
+
+        # ── Analyst rating breakdown ─────────────────────────────────────────
+        sb = b = h = s = 0
+        try:
+            rec = t_obj.recommendations
+            if rec is not None and not rec.empty:
+                latest  = rec.tail(1).iloc[0]
+                raw_sb  = int(latest.get("strongBuy",  0))
+                raw_b   = int(latest.get("buy",        0))
+                raw_h   = int(latest.get("hold",       0))
+                raw_s   = int(latest.get("sell",       0)) + int(latest.get("strongSell", 0))
+                raw_tot = raw_sb + raw_b + raw_h + raw_s
+                if raw_tot > 0:
+                    n  = analyst_count
+                    sb = round(n * raw_sb / raw_tot)
+                    b  = round(n * raw_b  / raw_tot)
+                    h  = round(n * raw_h  / raw_tot)
+                    s  = max(0, n - sb - b - h)
+        except Exception:
+            pass
+
+        if sb + b + h + s == 0:
+            n        = analyst_count
+            rec_mean = info.get("recommendationMean") or 3.0
+            if   rec_mean <= 1.5: sb = round(n*.70); b = round(n*.20); h = round(n*.08)
+            elif rec_mean <= 2.0: sb = round(n*.35); b = round(n*.45); h = round(n*.15)
+            elif rec_mean <= 2.5: sb = round(n*.15); b = round(n*.40); h = round(n*.35)
+            elif rec_mean <= 3.0: sb = round(n*.05); b = round(n*.25); h = round(n*.55)
+            else:                 sb = 0;            b = round(n*.10); h = round(n*.40)
+            s = max(0, n - sb - b - h)
+
+        consensus_map = {
+            "strong_buy": "Strong Buy", "buy": "Buy", "hold": "Hold",
+            "underperform": "Underperform", "sell": "Sell", "none": "Hold",
+        }
+        consensus = consensus_map.get(
+            (info.get("recommendationKey") or "none").lower(), "Hold")
+
+        momentum = get_momentum(ticker, consensus, analyst_count)
+
+        ytd_change = 0.0
+        try:
+            hist = t_obj.history(period="ytd")
+            if not hist.empty and hist["Close"].iloc[0] > 0:
+                ytd_change = round(
+                    (hist["Close"].iloc[-1] / hist["Close"].iloc[0] - 1) * 100, 1)
+        except Exception:
+            pass
+
+        return dict(
+            ticker=ticker,
+            name=info.get("longName") or info.get("shortName") or ticker,
+            sector=info.get("sector") or "Unknown",
+            current_price=round(current_price, 2),
+            target_price=round(target_price, 2),
+            upside_pct=upside_pct,
+            high_target=round(high_target, 2),
+            low_target=round(low_target, 2),
+            analyst_count=analyst_count,
+            consensus=consensus,
+            strong_buy=sb, buy=b, hold=h, sell=s,
+            market_cap=_fmt_cap(info.get("marketCap") or 0),
+            pe_ratio=round(info.get("trailingPE") or 0, 1),
+            ytd_change=ytd_change,
+            week52_low=round(info.get("fiftyTwoWeekLow")  or 0, 2),
+            week52_high=round(info.get("fiftyTwoWeekHigh") or 0, 2),
+            avg_volume=info.get("averageVolume") or 0,
+            last_updated=datetime.date.today().isoformat(),
+            eps=info.get("trailingEps"),
+            forward_pe=round(info.get("forwardPE") or 0, 1),
+            peg_ratio=round(info.get("pegRatio") or 0, 2),
+            dividend_yield=_normalize_yield(info.get("dividendYield")),
+            revenue=info.get("totalRevenue"),
+            profit_margin=info.get("profitMargins"),
+            momentum_trend=momentum["trend"],
+            momentum_detail=momentum["trend_detail"],
+            momentum_streak=momentum["streak_days"],
+            momentum_history=momentum["history"],
+        )
+    except Exception as e:
+        print(f"  ⚠  Skipped {ticker} (parse error): {e}")
+        return None
+
+# ── Main generation ──────────────────────────────────────────────
 def generate_stocks(run_date: str) -> list:
-    # For production: use get_full_universe() (full SEC EDGAR list, ~3–6 hrs).
+    # For production: use get_full_universe() (full SEC EDGAR list).
     # For development: use get_full_universe()[:500] or UNIVERSE_FALLBACK.
     tickers = get_full_universe()
     if not tickers:
@@ -316,11 +489,11 @@ def generate_stocks(run_date: str) -> list:
 
     # ── Uncomment ONE of the lines below to control scope ──
     # tickers = tickers[:2000]
-    # tickers = tickers[:500]   # dev: ~30-60 min
-    # tickers = tickers[:100]   # dev: ~5-10 min
+    tickers = tickers[:500]   # dev: ~15-30 min
+    # tickers = tickers[:100]   # dev: ~3-5 min
     # (leave commented for full production run)
 
-    # ── Resume support ──────────────────────────────────────────────────────
+    # ── Resume support ──────────────────────────────────────────
     # If a previous run today was killed partway through (timeout, crash,
     # restart), `progress` already has results for some tickers. Skip those
     # and only fetch the remaining ones.
@@ -332,157 +505,54 @@ def generate_stocks(run_date: str) -> list:
     else:
         remaining_tickers = tickers
 
+    # ── Conservative concurrency ────────────────────────────────────────
+    # yfinance/requests are synchronous, but threads still give real
+    # concurrency for network-bound I/O (the GIL is released while waiting
+    # on sockets). 3 workers is a conservative ~2-3x speedup over fully
+    # sequential, with shared rate-limit backoff (see _wait_for_shared_pause
+    # / _register_rate_limit) so if Yahoo starts throttling, ALL workers
+    # back off together rather than one thread pausing while others keep
+    # hammering. If you see sustained rate-limiting in generate.log, drop
+    # MAX_WORKERS to 2 or 1.
+    MAX_WORKERS = 5
+
     print(f"  →  Fetching analyst targets for {len(remaining_tickers)} tickers "
-          f"({len(tickers)} total)...")
+          f"({len(tickers)} total) with {MAX_WORKERS} concurrent workers...")
     rows = list(done.values())
     total = len(remaining_tickers)
-    rate_limit_streak = 0
     CHECKPOINT_EVERY = 50  # merge into live cache every N newly-processed tickers
     processed_since_checkpoint = 0
+    completed = 0
+    progress_lock = threading.Lock()
 
-    for i, ticker in enumerate(remaining_tickers):
-        if i % 25 == 0:
-            print(f"  →  Progress: {i}/{total} remaining "
-                  f"({len(done) + i} of {len(tickers)} total, {len(rows)} valid so far)")
-
-        # 2 seconds per ticker keeps us safely under Yahoo's ~2000 req/hr limit
-        time.sleep(0.5 + random.uniform(0.5, 2.0))
-
-        retries = 3
-        info = None
-        t_obj = None
-        for attempt in range(retries):
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        future_to_ticker = {
+            executor.submit(fetch_ticker_row, t): t for t in remaining_tickers
+        }
+        for future in as_completed(future_to_ticker):
+            ticker = future_to_ticker[future]
             try:
-                t_obj = yf.Ticker(ticker)
-                info  = t_obj.info
-                if info and len(info) < 10:
-                    raise ValueError("Stub response — likely rate limited")
-                rate_limit_streak = 0
-                break
+                row = future.result()
             except Exception as e:
-                err = str(e)
-                if "Too Many Requests" in err or "Rate limited" in err or "Stub response" in err:
-                    rate_limit_streak += 1
-                    wait = min(60, 10 * (attempt + 1)) + random.uniform(0, 5)
-                    print(f"  ⚠  Rate limited ({ticker}), waiting {wait:.0f}s "
-                          f"(streak: {rate_limit_streak})")
-                    time.sleep(wait)
-                    if rate_limit_streak >= 5:
-                        print("  ⚠  Extended pause (60s)...")
-                        time.sleep(60)
-                        rate_limit_streak = 0
-                else:
-                    print(f"  ⚠  Skipped {ticker}: {e}")
-                    break
+                print(f"  ⚠  Worker error on {ticker}: {e}")
+                row = None
 
-        if not info or len(info) < 10 or t_obj is None:
-            continue
+            with progress_lock:
+                completed += 1
+                if completed % 25 == 0 or completed == total:
+                    print(f"  →  Progress: {completed}/{total} remaining "
+                          f"({len(done) + completed} of {len(tickers)} total, "
+                          f"{len(rows)} valid so far)")
 
-        try:
-            current_price = info.get("currentPrice") or info.get("regularMarketPrice") or 0
-            target_price  = info.get("targetMeanPrice") or 0
-            analyst_count = info.get("numberOfAnalystOpinions") or 0
-
-            if current_price <= 0 or target_price <= 0 or analyst_count < 2:
-                continue
-
-            upside_pct = round((target_price / current_price - 1) * 100, 1)
-            if upside_pct < 0:
-                continue
-
-            high_target = info.get("targetHighPrice") or 0
-            low_target  = info.get("targetLowPrice")  or 0
-
-            # ── Analyst rating breakdown ───────────────────────────────────────
-            sb = b = h = s = 0
-            try:
-                rec = t_obj.recommendations
-                if rec is not None and not rec.empty:
-                    latest  = rec.tail(1).iloc[0]
-                    raw_sb  = int(latest.get("strongBuy",  0))
-                    raw_b   = int(latest.get("buy",        0))
-                    raw_h   = int(latest.get("hold",       0))
-                    raw_s   = int(latest.get("sell",       0)) + int(latest.get("strongSell", 0))
-                    raw_tot = raw_sb + raw_b + raw_h + raw_s
-                    if raw_tot > 0:
-                        n  = analyst_count
-                        sb = round(n * raw_sb / raw_tot)
-                        b  = round(n * raw_b  / raw_tot)
-                        h  = round(n * raw_h  / raw_tot)
-                        s  = max(0, n - sb - b - h)
-            except Exception:
-                pass
-
-            if sb + b + h + s == 0:
-                n        = analyst_count
-                rec_mean = info.get("recommendationMean") or 3.0
-                if   rec_mean <= 1.5: sb = round(n*.70); b = round(n*.20); h = round(n*.08)
-                elif rec_mean <= 2.0: sb = round(n*.35); b = round(n*.45); h = round(n*.15)
-                elif rec_mean <= 2.5: sb = round(n*.15); b = round(n*.40); h = round(n*.35)
-                elif rec_mean <= 3.0: sb = round(n*.05); b = round(n*.25); h = round(n*.55)
-                else:                 sb = 0;            b = round(n*.10); h = round(n*.40)
-                s = max(0, n - sb - b - h)
-
-            consensus_map = {
-                "strong_buy": "Strong Buy", "buy": "Buy", "hold": "Hold",
-                "underperform": "Underperform", "sell": "Sell", "none": "Hold",
-            }
-            consensus = consensus_map.get(
-                (info.get("recommendationKey") or "none").lower(), "Hold")
-
-            momentum = get_momentum(ticker, consensus, analyst_count)
-
-            ytd_change = 0.0
-            try:
-                hist = t_obj.history(period="ytd")
-                if not hist.empty and hist["Close"].iloc[0] > 0:
-                    ytd_change = round(
-                        (hist["Close"].iloc[-1] / hist["Close"].iloc[0] - 1) * 100, 1)
-            except Exception:
-                pass
-
-            rows.append(dict(
-                ticker=ticker,
-                name=info.get("longName") or info.get("shortName") or ticker,
-                sector=info.get("sector") or "Unknown",
-                current_price=round(current_price, 2),
-                target_price=round(target_price, 2),
-                upside_pct=upside_pct,
-                high_target=round(high_target, 2),
-                low_target=round(low_target, 2),
-                analyst_count=analyst_count,
-                consensus=consensus,
-                strong_buy=sb, buy=b, hold=h, sell=s,
-                market_cap=_fmt_cap(info.get("marketCap") or 0),
-                pe_ratio=round(info.get("trailingPE") or 0, 1),
-                ytd_change=ytd_change,
-                week52_low=round(info.get("fiftyTwoWeekLow")  or 0, 2),
-                week52_high=round(info.get("fiftyTwoWeekHigh") or 0, 2),
-                avg_volume=info.get("averageVolume") or 0,
-                last_updated=datetime.date.today().isoformat(),
-                eps=info.get("trailingEps"),
-                forward_pe=round(info.get("forwardPE") or 0, 1),
-                peg_ratio=round(info.get("pegRatio") or 0, 2),
-                dividend_yield=_normalize_yield(info.get("dividendYield")),
-                revenue=info.get("totalRevenue"),
-                profit_margin=info.get("profitMargins"),
-                momentum_trend=momentum["trend"],
-                momentum_detail=momentum["trend_detail"],
-                momentum_streak=momentum["streak_days"],
-                momentum_history=momentum["history"],
-            ))
-
-            # Checkpoint immediately — this single ticker's result survives
-            # even if the process is killed on the very next line.
-            save_progress_row(run_date, ticker, rows[-1])
-            processed_since_checkpoint += 1
-            if processed_since_checkpoint >= CHECKPOINT_EVERY:
-                merge_progress_into_cache(run_date)
-                processed_since_checkpoint = 0
-
-        except Exception as e:
-            print(f"  ⚠  Skipped {ticker} (parse error): {e}")
-            continue
+                if row is not None:
+                    rows.append(row)
+                    # Checkpoint immediately — this single ticker's result
+                    # survives even if the process is killed right after.
+                    save_progress_row(run_date, ticker, row)
+                    processed_since_checkpoint += 1
+                    if processed_since_checkpoint >= CHECKPOINT_EVERY:
+                        merge_progress_into_cache(run_date)
+                        processed_since_checkpoint = 0
 
     rows.sort(key=lambda x: x["upside_pct"], reverse=True)
     for i, r in enumerate(rows):

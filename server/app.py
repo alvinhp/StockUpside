@@ -38,13 +38,24 @@ app.secret_key = _APP_SECRET
 
 # ── In-memory stock cache (populated by get_stocks_cached, invalidated nightly) ─
 _cache_lock: threading.Lock = threading.Lock()
-_cache: dict = {"data": None, "date": None}
+_cache: dict = {"data": None, "date": None, "ts": None, "checked_at": 0.0}
+
+# How often (seconds) to re-check the DB for a newer row while serving from
+# the in-memory cache. generate.py runs in a SEPARATE PROCESS and checkpoints
+# every ~50 tickers via merge_progress_into_cache() — it has no way to call
+# invalidate_memory_cache() in this process directly. Without this check,
+# the site would keep serving the snapshot from the moment _cache was last
+# warmed (e.g. 50 stocks from early in a 3-hour run) until the whole run
+# finishes and nightly_refresh()'s invalidate_memory_cache() fires.
+_FRESHNESS_CHECK_INTERVAL = 10.0  # seconds
 
 def invalidate_memory_cache():
     """Clear the in-memory stock cache so the next request re-reads from DB."""
     with _cache_lock:
         _cache["data"] = None
         _cache["date"] = None
+        _cache["ts"] = None
+        _cache["checked_at"] = 0.0
 
 
 def nightly_refresh():
@@ -791,12 +802,17 @@ def init_db():
     con.commit()
     con.close()
 
-def get_cached():
+def get_cached_with_ts():
+    """Like get_cached() but also returns the row's `ts`, so the in-memory
+    cache can be invalidated by comparing timestamps instead of re-parsing
+    the full JSON blob on every request."""
     today = datetime.date.today().isoformat()
     con = get_db()
-    row = con.execute("SELECT data FROM cache WHERE date=?", (today,)).fetchone()
+    row = con.execute("SELECT data, ts FROM cache WHERE date=?", (today,)).fetchone()
     con.close()
-    return json.loads(row[0]) if row else None
+    if row:
+        return json.loads(row[0]), row[1]
+    return None, None
 
 def save_cache(data):
     today = datetime.date.today().isoformat()
@@ -820,22 +836,37 @@ def get_db() -> sqlite3.Connection:
 # Data is only written by the offline generate.py job or nightly_refresh thread.
 def get_stocks_cached() -> list:
     today = datetime.date.today().isoformat()
+    now   = time.monotonic()
 
-    # 1. Fast path: in-memory cache is fresh for today
+    # 1. Fast path: in-memory cache is fresh for today AND we've checked
+    #    recently enough that it's unlikely a checkpoint merge from
+    #    generate.py (running in another process) has landed since.
     with _cache_lock:
-        if _cache["date"] == today and _cache["data"]:
+        if (_cache["date"] == today and _cache["data"]
+                and (now - _cache["checked_at"]) < _FRESHNESS_CHECK_INTERVAL):
             return _cache["data"]
 
-    # 2. Try today's data from DB
-    data = get_cached()
+    # 2. Cheap freshness check: has a newer row landed in the DB than what
+    #    we have cached? generate.py's periodic checkpoints update `ts` on
+    #    every merge, so this catches mid-run progress without re-reading
+    #    the full (potentially large) JSON blob each time.
+    latest_ts = get_latest_cache_ts(today)
+    with _cache_lock:
+        if (_cache["date"] == today and _cache["data"]
+                and latest_ts is not None and latest_ts <= (_cache["ts"] or 0)):
+            _cache["checked_at"] = now
+            return _cache["data"]
+
+    # 3. Try today's data from DB
+    data, data_ts = get_cached_with_ts()
     data_date = today
 
-    # 3. If no data for today, serve the most recent available snapshot
+    # 4. If no data for today, serve the most recent available snapshot
     #    (covers: first boot, mid-refresh, or generate.py hasn't run yet today)
     if not data:
-        data, data_date = get_any_cached_with_date()
+        data, data_date, data_ts = get_any_cached_with_date()
 
-    # 4. Still nothing — DB is empty (generate.py has never run)
+    # 5. Still nothing — DB is empty (generate.py has never run)
     if not data:
         return []
 
@@ -845,31 +876,34 @@ def get_stocks_cached() -> list:
     with _cache_lock:
         _cache["data"] = data
         _cache["date"] = data_date
+        _cache["ts"] = data_ts
+        _cache["checked_at"] = now
 
     return data
 
-def get_any_cached():
-    """Return the most recently cached data regardless of date. Used as
-    a fallback while a generation run is in progress."""
+def get_latest_cache_ts(date_str: str) -> int | None:
+    """Cheap check: return the `ts` of the cache row for `date_str`,
+    without fetching the (potentially multi-MB) `data` column. Used to
+    detect that generate.py has checkpointed newer data since we last
+    warmed the in-memory cache, without paying for a full JSON re-parse
+    on every request."""
     con = get_db()
-    row = con.execute(
-        "SELECT data FROM cache ORDER BY ts DESC LIMIT 1"
-    ).fetchone()
+    row = con.execute("SELECT ts FROM cache WHERE date=?", (date_str,)).fetchone()
     con.close()
-    return json.loads(row[0]) if row else None
+    return row[0] if row else None
 
 def get_any_cached_with_date():
-    """Like get_any_cached() but also returns the row's date so the
-    in-memory cache can be keyed to the data's actual date rather than
-    today — preventing stale data from being served indefinitely."""
+    """Like get_any_cached() but also returns the row's date and ts so the
+    in-memory cache can be keyed to the data's actual date/timestamp rather
+    than today — preventing stale data from being served indefinitely."""
     con = get_db()
     row = con.execute(
-        "SELECT data, date FROM cache ORDER BY ts DESC LIMIT 1"
+        "SELECT data, date, ts FROM cache ORDER BY ts DESC LIMIT 1"
     ).fetchone()
     con.close()
     if row:
-        return json.loads(row[0]), row[1]
-    return None, None
+        return json.loads(row[0]), row[1], row[2]
+    return None, None, None
 
 def render_analyst_track_record() -> str:
     yr = datetime.date.today().year
