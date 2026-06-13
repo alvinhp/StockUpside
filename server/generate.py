@@ -152,22 +152,55 @@ def save_progress_row(run_date: str, ticker: str, row: dict):
     con.commit()
     con.close()
 
+def get_most_recent_full_cache(exclude_date: str | None = None) -> list:
+    """Return the most recent cached stock list (any date), optionally
+    excluding a specific date. Used so a partial in-progress run can be
+    overlaid onto yesterday's full dataset instead of replacing it."""
+    con = get_db()
+    if exclude_date:
+        row = con.execute(
+            "SELECT data FROM cache WHERE date != ? ORDER BY ts DESC LIMIT 1",
+            (exclude_date,)
+        ).fetchone()
+    else:
+        row = con.execute(
+            "SELECT data FROM cache ORDER BY ts DESC LIMIT 1"
+        ).fetchone()
+    con.close()
+    return json.loads(row[0]) if row else []
+
 def merge_progress_into_cache(run_date: str):
     """Write everything processed so far into the live `cache` table so the
     site can serve partial/fresher data while the run is still going.
-    Ranks are recomputed over the partial set."""
-    rows = list(load_progress(run_date).values())
-    if not rows:
+
+    Rather than replacing the cache with ONLY the tickers processed so far
+    (which would shrink the site to e.g. 50 stocks mid-run), this overlays
+    the new/updated rows on top of the most recent full cache: tickers
+    re-processed today get their fresh data, tickers not yet reached this
+    run keep yesterday's data. Ranks are recomputed over the merged set.
+    """
+    new_rows = list(load_progress(run_date).values())
+    if not new_rows:
         return
-    rows = sorted(rows, key=lambda x: x["upside_pct"], reverse=True)
+
+    base_rows = get_most_recent_full_cache(exclude_date=run_date)
+
+    merged: dict = {r["ticker"]: r for r in base_rows}
+    for r in new_rows:
+        merged[r["ticker"]] = r  # fresh data overrides stale
+
+    rows = sorted(merged.values(), key=lambda x: x["upside_pct"], reverse=True)
     for i, r in enumerate(rows):
         r["rank"] = i + 1
+
     con = get_db()
     con.execute("INSERT OR REPLACE INTO cache VALUES(?,?,?)",
                 (run_date, json.dumps(rows), int(time.time())))
     con.commit()
     con.close()
-    print(f"  ↻  Checkpoint: merged {len(rows)} stocks into cache for {run_date}")
+    print(f"  ↻  Checkpoint: merged {len(new_rows)} fresh + "
+          f"{len(rows)-len(new_rows)} carried-over stocks "
+          f"({len(rows)} total) into cache for {run_date}")
 
 def clear_progress(run_date: str):
     """Remove checkpoint rows for a completed run."""
@@ -559,7 +592,7 @@ def generate_stocks(run_date: str) -> list:
     # back off together rather than one thread pausing while others keep
     # hammering. If you see sustained rate-limiting in generate.log, drop
     # MAX_WORKERS to 2 or 1.
-    MAX_WORKERS = 5
+    MAX_WORKERS = 4
 
     print(f"  →  Fetching analyst targets for {len(remaining_tickers)} tickers "
           f"({len(tickers)} total) with {MAX_WORKERS} concurrent workers...")
