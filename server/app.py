@@ -2183,6 +2183,7 @@ def api_subscribe_free():
     # Send welcome email to genuinely new subscribers only
     if is_new:
         def _send_welcome():
+            print(f"  [WELCOME EMAIL] thread started for {addr}")
             try:
                 ok = send_email(addr, "▲ You're on the StockUpside.io list!",
                                  welcome_email_html(addr))
