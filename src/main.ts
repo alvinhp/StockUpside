@@ -278,7 +278,7 @@ function generatingBanner() {
     if (!stats?.generating) return "";
     return `<div class="gen-banner">
         <span class="gen-spinner">⟳</span>
-        Data is refreshing in the background — current prices may be up to 24h old.
+        Data is refreshing in the background. Current prices may be up to 24h old.
         This typically takes 3–6 hours.
     </div>`;
 }
@@ -467,7 +467,7 @@ function momentumNote(): string {
     const allNeutral = all.length > 0 && all.every(s => !s.locked && s.momentum_trend === "neutral");
     if (!allNeutral) return "";
     return `<div class="momentum-note">
-        ⓘ Momentum data is still building up — it populates automatically
+        ⓘ Momentum data is still building up, it populates automatically
         as daily snapshots are collected over 7–30 days.
     </div>`;
 }
@@ -652,7 +652,7 @@ function emailPrefsModal(): string {
         <div class="pw-mark">✉</div>
         <h2>Weekly Digest Settings</h2>
         <p>Every Monday we'll email your Top 10 picks. Set filters below to
-           get picks tailored to your strategy — leave as "Any" for the
+           get picks tailored to your strategy. Leave as "Any" for the
            overall Top 10.</p>
       </div>
       <div class="ep-form">
@@ -734,7 +734,10 @@ function paywallModal() {
           <div class="plan-name">Pro Monthly</div>
           <div class="plan-price">$29<span>/mo</span></div>
           <ul>
-            <li>✓ Full top 5000+ ranked list</li>
+            <li>✓ Full top 2000+ ranked list</li>
+            <li>✓ Filter by sector, consensus, momentum, and more</li>
+            <li>✓ Unlimited watchlist</li>
+            <li>✓ Weekly stock digest based on filters</li>
             <li>✓ Everything in free tier</li>
             <li>✓ Priority support</li>
             <li>✓ CSV export (Coming soon)</li>
@@ -965,10 +968,10 @@ function bindEmailPrefs() {
         const n = d.matching_stocks ?? 0;
         if (infoEl) {
           if (n === 0) {
-            infoEl.innerHTML = `⚠ No stocks currently match these filters — we'll send the overall Top 10 instead until something matches.`;
+            infoEl.innerHTML = `⚠ No stocks currently match these filters. We'll send the overall Top 10 instead until something matches.`;
             infoEl.className = "ep-match-info ep-match-warn";
           } else {
-            infoEl.innerHTML = `✓ ${n} stock${n===1?"":"s"} currently match — your Monday digest will pick the top ${Math.min(10,n)} of these.`;
+            infoEl.innerHTML = `✓ ${n} stock${n===1?"":"s"} currently match. Your Monday digest will pick the top ${Math.min(10,n)} of these.`;
             infoEl.className = "ep-match-info ep-match-ok";
           }
         }
@@ -1009,7 +1012,7 @@ function bindGlobals() {
   // Pro login link request
   const recoverBtn = document.getElementById("pw-recover-btn");
   if (recoverBtn) recoverBtn.onclick = async () => {
-    const email = prompt("Enter the email you subscribed with — we'll send you a login link:");
+    const email = prompt("Enter the email you subscribed with. We'll send you a login link:");
     if (!email || !email.includes("@")) return;
     recoverBtn.textContent = "Sending…";
     try {
@@ -1128,7 +1131,7 @@ if (subBtn) subBtn.onclick = async () => {
   // ever returned directly from this endpoint; see /api/get-token).
   const btnLogin = document.getElementById("btn-login");
   if (btnLogin) btnLogin.onclick = async () => {
-    const email = prompt("Enter the email you subscribed with — we'll send you a login link:");
+    const email = prompt("Enter the email you subscribed with. We'll send you a login link:");
     if (!email || !email.includes("@")) return;
     btnLogin.textContent = "Sending…";
     try {

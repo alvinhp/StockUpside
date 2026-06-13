@@ -82,6 +82,7 @@ MIT — use commercially, modify freely.
 - Changed generate.py to update the cache per 50 stocks. Also saves data if process times out.
 
 ## TO DO LIST
+- Fix email sending features
 - Better SEO optimization
 - Filter by market cap
 - Watchlist: Let free users save 5 stocks, pro users can save unlimited
