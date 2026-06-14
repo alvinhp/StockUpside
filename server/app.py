@@ -468,184 +468,6 @@ def _normalize_yield(v):
     if v > 0.2:   return v / 100  # was already in percentage form
     return v
 
-def generate_stocks():
-    def _fmt_cap(mc):
-        if not mc: return "N/A"
-        if mc >= 1e12: return f"${mc/1e12:.2f}T"
-        if mc >= 1e9:  return f"${mc/1e9:.0f}B"
-        return f"${mc/1e6:.0f}M"
-
-    #tickers = get_full_universe() # use for production only, takes 3-6 hours to run
-    tickers = get_full_universe()[:500] # remove for production
-    if not tickers:
-        print("  ⚠  Universe fetch failed, using hardcoded list")
-        tickers = [row[0] for row in UNIVERSE]
-
-    print(f"  →  Fetching analyst targets for {len(tickers)} tickers...")
-
-    rows = []
-    total = len(tickers)
-    rate_limit_streak = 0  # track consecutive rate limit hits
-
-    for i, ticker in enumerate(tickers):
-        if i % 25 == 0:
-            print(f"  →  Progress: {i}/{total} ({len(rows)} valid so far)")
-
-        # Base delay — yfinance allows ~2000 req/hour without cookies
-        # 2 seconds per ticker = 1800/hour, safely under the limit
-        time.sleep(0 + random.uniform(0, 0.5)) # change to 2 secs for production
-
-        retries = 3
-        info = None
-        for attempt in range(retries):
-            try:
-                t    = yf.Ticker(ticker)
-                info = t.info
-
-                # If we got rate limited, info will be a minimal dict
-                # Yahoo returns {"trailingPegRatio": None} or similar stub
-                if info and len(info) < 10:
-                    raise ValueError("Stub response — likely rate limited")
-
-                rate_limit_streak = 0
-                break
-
-            except Exception as e:
-                err = str(e)
-                if "Too Many Requests" in err or "Rate limited" in err or "Stub response" in err:
-                    rate_limit_streak += 1
-                    wait = min(60, 10 * (attempt + 1)) + random.uniform(0, 5)
-                    print(f"  ⚠  Rate limited ({ticker}), waiting {wait:.0f}s... (streak: {rate_limit_streak})")
-                    time.sleep(wait)
-
-                    # If rate limiting is sustained, take a longer break
-                    if rate_limit_streak >= 5:
-                        print(f"  ⚠  Extended rate limit pause (60s)...")
-                        time.sleep(60)
-                        rate_limit_streak = 0
-                else:
-                    print(f"  ⚠  Skipped {ticker}: {e}")
-                    break
-
-        if not info or len(info) < 10:
-            continue
-
-        try:
-            current_price = info.get("currentPrice") or info.get("regularMarketPrice") or 0
-            target_price  = info.get("targetMeanPrice") or 0
-            analyst_count = info.get("numberOfAnalystOpinions") or 0
-
-            if current_price <= 0 or target_price <= 0 or analyst_count < 2:
-                continue
-
-            upside_pct = round((target_price / current_price - 1) * 100, 1)
-
-            if upside_pct < 0 or upside_pct > 2000:
-                continue
-
-            high_target = info.get("targetHighPrice") or 0
-            low_target  = info.get("targetLowPrice") or 0
-            # ── Analyst rating breakdown ───────────────────────────────────────────
-            sb = b = h = s = 0
-            try:
-                rec = t.recommendations
-                if rec is not None and not rec.empty:
-                    # Use most recent single period only (not cumulative sum)
-                    latest = rec.tail(1).iloc[0]
-                    raw_sb = int(latest.get("strongBuy", 0))
-                    raw_b  = int(latest.get("buy", 0))
-                    raw_h  = int(latest.get("hold", 0))
-                    raw_s  = int(latest.get("sell", 0)) + int(latest.get("strongSell", 0))
-                    raw_total = raw_sb + raw_b + raw_h + raw_s
-
-                    if raw_total > 0:
-                        # Scale ratios to match the authoritative analyst_count
-                        n = analyst_count
-                        sb = round(n * raw_sb / raw_total)
-                        b  = round(n * raw_b  / raw_total)
-                        h  = round(n * raw_h  / raw_total)
-                        s  = max(0, n - sb - b - h)
-            except Exception:
-                pass
-
-            # Fallback to mean-based estimation if DataFrame unavailable
-            if sb + b + h + s == 0:
-                n        = analyst_count
-                rec_mean = info.get("recommendationMean") or 3.0
-                if rec_mean <= 1.5:
-                    sb = round(n * 0.70); b = round(n * 0.20); h = round(n * 0.08)
-                elif rec_mean <= 2.0:
-                    sb = round(n * 0.35); b = round(n * 0.45); h = round(n * 0.15)
-                elif rec_mean <= 2.5:
-                    sb = round(n * 0.15); b = round(n * 0.40); h = round(n * 0.35)
-                elif rec_mean <= 3.0:
-                    sb = round(n * 0.05); b = round(n * 0.25); h = round(n * 0.55)
-                else:
-                    sb = 0; b = round(n * 0.10); h = round(n * 0.40)
-                s = max(0, n - sb - b - h)
-            consensus_map = {
-                "strong_buy": "Strong Buy", "buy": "Buy", "hold": "Hold",
-                "underperform": "Underperform", "sell": "Sell", "none": "Hold"
-            }
-            consensus = consensus_map.get(
-                (info.get("recommendationKey") or "none").lower(), "Hold"
-            )
-            momentum = get_momentum(ticker, consensus, analyst_count)
-
-            ytd_change = 0.0
-            try:
-                hist = t.history(period="ytd")
-                if not hist.empty and hist["Close"].iloc[0] > 0:
-                    ytd_change = round(
-                        (hist["Close"].iloc[-1] / hist["Close"].iloc[0] - 1) * 100, 1
-                    )
-            except Exception:
-                pass
-            
-            rows.append(dict(
-                ticker=ticker,
-                name=info.get("longName") or info.get("shortName") or ticker,
-                sector=info.get("sector") or "Unknown",
-                current_price=round(current_price, 2),
-                target_price=round(target_price, 2),
-                upside_pct=upside_pct,
-                high_target=round(high_target, 2),
-                low_target=round(low_target, 2),
-                analyst_count=analyst_count,
-                consensus=consensus,
-                strong_buy=sb, buy=b, hold=h, sell=s,
-                market_cap=_fmt_cap(info.get("marketCap") or 0),
-                pe_ratio=round(info.get("trailingPE") or info.get("forwardPE") or 0, 1),
-                ytd_change=ytd_change,
-                week52_low=round(info.get("fiftyTwoWeekLow") or 0, 2),
-                week52_high=round(info.get("fiftyTwoWeekHigh") or 0, 2),
-                avg_volume=info.get("averageVolume") or 0,
-                last_updated=datetime.date.today().isoformat(),
-                eps=info.get("trailingEps"),
-                forward_pe=round(info.get("forwardPE") or 0, 1),
-                peg_ratio=round(info.get("pegRatio") or 0, 2),
-                dividend_yield=_normalize_yield(info.get("dividendYield")),
-                revenue=info.get("totalRevenue"),
-                profit_margin=info.get("profitMargins"),
-                momentum_trend=momentum["trend"],
-                momentum_detail=momentum["trend_detail"],
-                momentum_streak=momentum["streak_days"],
-                momentum_history=momentum["history"],
-            ))
-
-        except Exception as e:
-            print(f"  ⚠  Skipped {ticker} (parse error): {e}")
-            continue
-
-    rows.sort(key=lambda x: x["upside_pct"], reverse=True)
-    for i, r in enumerate(rows):
-        r["rank"] = i + 1
-
-    print(f"  ✓  Done. {len(rows)} stocks with valid analyst targets.")
-    #return rows[:100]
-    save_snapshot(rows)
-    return rows
-
 # ── Generation lock ────────────────────────────────────────────────────────────
 _generating = False
 _generating_lock = threading.Lock()
@@ -1532,6 +1354,15 @@ def cors(r):
         r.headers["Access-Control-Allow-Origin"] = origin
     r.headers["Access-Control-Allow-Headers"] = "Content-Type"
     r.headers["Vary"] = "Origin"
+    return r
+
+@app.after_request
+def security_headers(r):
+    # Baseline hardening headers. HSTS is set at the nginx layer (only
+    # appropriate there, since it must not be sent over plain HTTP).
+    r.headers["X-Content-Type-Options"] = "nosniff"
+    r.headers["X-Frame-Options"]        = "DENY"
+    r.headers["Referrer-Policy"]        = "strict-origin-when-cross-origin"
     return r
 
 # ── Email ─────────────────────────────────────────────────────────────────────
@@ -2642,6 +2473,10 @@ def stocks_index():
 def accuracy_page():
     return Response(render_accuracy_page(), mimetype="text/html")
 
+@app.route("/terms")
+def terms_page():
+    return Response(render_terms_page(), mimetype="text/html")
+
 @app.route("/privacy")
 def privacy_page():
     return Response(render_privacy_page(), mimetype="text/html")
@@ -2926,6 +2761,174 @@ def rate_limited(e):
     return jsonify({"error": "Too many requests. Please slow down.", "retry_after": 60}), 429
 
 
+def render_terms_page() -> str:
+    yr = datetime.date.today().year
+    updated = "2026-06-14"
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Terms of Service | StockUpside.io</title>
+  <meta name="description" content="Terms of Service for StockUpside.io."/>
+  <meta name="robots" content="index, follow"/>
+  <link rel="canonical" href="https://stockupside.io/terms"/>
+  <link rel="stylesheet" href="/style.css"/>
+  <style>
+    .legal-wrap {{
+      max-width: 760px; margin: 0 auto; padding: 48px 24px 80px;
+    }}
+    .legal-wrap h1 {{
+      font-family: var(--font-mono); font-size: 24px;
+      font-weight: 700; margin-bottom: 6px; color: var(--text);
+    }}
+    .legal-meta {{
+      font-family: var(--font-mono); font-size: 11px;
+      color: var(--text3); margin-bottom: 40px; letter-spacing: .04em;
+    }}
+    .legal-wrap h2 {{
+      font-family: var(--font-mono); font-size: 12px; font-weight: 700;
+      letter-spacing: .1em; color: var(--accent);
+      margin: 36px 0 12px; text-transform: uppercase;
+    }}
+    .legal-wrap p {{
+      font-size: 13px; color: var(--text2); line-height: 1.8;
+      margin-bottom: 14px;
+    }}
+    .legal-wrap ul {{
+      margin: 0 0 14px 20px; display: flex; flex-direction: column; gap: 6px;
+    }}
+    .legal-wrap li {{
+      font-size: 13px; color: var(--text2); line-height: 1.7;
+    }}
+    .legal-wrap a {{ color: var(--accent); }}
+    .legal-divider {{
+      border: none; border-top: 1px solid var(--border); margin: 40px 0;
+    }}
+  </style>
+</head>
+<body>
+<header class="hdr">
+  <div class="hdr-l">
+    <a href="/" class="brand" style="text-decoration:none">
+      <span class="brand-mark">▲</span>
+      <div>
+        <div class="brand-name">STOCKUPSIDE<span class="brand-io">.IO</span></div>
+        <div class="brand-tag">Analyst Price Target Intelligence</div>
+      </div>
+    </a>
+  </div>
+  <div class="hdr-r">
+    <a href="/" class="hdr-link">← Dashboard</a>
+  </div>
+</header>
+
+<div class="legal-wrap">
+  <h1>Terms of Service</h1>
+  <p class="legal-meta">Last updated: {updated} &nbsp;·&nbsp; Effective immediately</p>
+
+  <p>These Terms of Service ("Terms") govern your use of StockUpside.io (the "Service"),
+  operated by StockUpside.io ("we", "us", or "our"). By accessing or using the Service,
+  you agree to be bound by these Terms. If you do not agree, please do not use the
+  Service.</p>
+
+  <h2>1. Description of Service</h2>
+  <p>StockUpside.io provides aggregated, publicly available analyst price target and
+  consensus data for publicly traded stocks, ranked by potential upside. A free tier
+  provides limited access; a paid "Pro" subscription provides expanded access and
+  additional features.</p>
+
+  <h2>2. Not Financial Advice</h2>
+  <p>The Service is provided for informational and educational purposes only. Nothing
+  on StockUpside.io constitutes financial, investment, legal, or tax advice, or a
+  recommendation to buy, sell, or hold any security. Analyst price targets and
+  consensus ratings reflect third-party opinions and are not guarantees of future
+  performance. See our <a href="/disclaimer">Financial Disclaimer</a> for more detail.
+  You are solely responsible for your own investment decisions and should consult a
+  licensed financial professional before making any investment.</p>
+
+  <h2>3. Accounts and Access</h2>
+  <p>Pro access is granted via a secure login link sent to the email address used at
+  signup. You are responsible for keeping access to that email account secure. We
+  are not liable for unauthorized access resulting from a compromised email account.</p>
+
+  <h2>4. Subscriptions, Billing, and Cancellation</h2>
+  <ul>
+    <li>Pro subscriptions are billed on a recurring basis (monthly or annual, as
+    selected at signup) via Stripe, our third-party payment processor.</li>
+    <li>You may cancel your subscription at any time. Cancellation takes effect at
+    the end of the current billing period; you will retain Pro access until then,
+    and will not be charged again afterward.</li>
+    <li>Fees are non-refundable except where required by law. If you believe you were
+    charged in error, contact <a href="mailto:hello@stockupside.io">hello@stockupside.io</a>
+    and we will review the request.</li>
+    <li>We reserve the right to change subscription pricing with reasonable advance
+    notice. Price changes will not apply to a billing period that has already been
+    paid for.</li>
+  </ul>
+
+  <h2>5. Acceptable Use</h2>
+  <p>You agree not to: (a) attempt to gain unauthorized access to the Service or its
+  underlying systems; (b) scrape, reproduce, or redistribute Service data at scale
+  for a competing commercial product; (c) share a Pro account's access link with
+  others; or (d) use the Service in any way that violates applicable law.</p>
+
+  <h2>6. Data Sources and Accuracy</h2>
+  <p>Stock data is sourced from third parties, including Yahoo Finance (via the
+  yfinance library) and SEC EDGAR, and is refreshed periodically (typically daily).
+  Data may be delayed, incomplete, or inaccurate. We make no warranty as to the
+  accuracy, completeness, or timeliness of any data presented on the Service.</p>
+
+  <h2>7. Service Availability</h2>
+  <p>We aim to keep the Service available but do not guarantee uninterrupted access.
+  The Service may be unavailable from time to time due to maintenance, technical
+  issues, or factors outside our control.</p>
+
+  <h2>8. Intellectual Property</h2>
+  <p>The Service's design, branding, and original written content are owned by
+  StockUpside.io. Underlying financial data is sourced from third parties as
+  described above and remains subject to those parties' terms.</p>
+
+  <h2>9. Limitation of Liability</h2>
+  <p>To the maximum extent permitted by law, StockUpside.io and its operators shall
+  not be liable for any indirect, incidental, special, consequential, or punitive
+  damages, including but not limited to investment losses, arising from your use of
+  the Service or reliance on any information presented on it.</p>
+
+  <h2>10. Termination</h2>
+  <p>We may suspend or terminate access to the Service for any account that violates
+  these Terms, without prior notice.</p>
+
+  <h2>11. Changes to These Terms</h2>
+  <p>We may update these Terms from time to time. Continued use of the Service after
+  changes are posted constitutes acceptance of the revised Terms. The "Last updated"
+  date above reflects the most recent revision.</p>
+
+  <h2>12. Contact</h2>
+  <p>Questions about these Terms? Email us at
+  <a href="mailto:hello@stockupside.io">hello@stockupside.io</a>.</p>
+
+  <hr class="legal-divider"/>
+  <p style="font-size:11px;color:var(--text3);font-family:var(--font-mono)">
+    See also: <a href="/privacy">Privacy Policy</a> &nbsp;·&nbsp;
+    <a href="/disclaimer">Financial Disclaimer</a> &nbsp;·&nbsp;
+    <a href="/">← Back to Dashboard</a>
+  </p>
+</div>
+
+<footer class="ftr">
+  <div>© {yr} StockUpside.io · <a href="/disclaimer" style="color:var(--text3)">Not financial advice</a></div>
+  <div class="ftr-r">
+    <a href="/terms">Terms</a> ·
+    <a href="/privacy">Privacy</a> ·
+    <a href="/disclaimer">Disclaimer</a> ·
+    <a href="mailto:hello@stockupside.io">Contact</a>
+  </div>
+</footer>
+</body>
+</html>"""
+
+
 def render_privacy_page() -> str:
     yr = datetime.date.today().year
     updated = "2026-06-07"  # update this when you make material changes
@@ -3088,6 +3091,7 @@ def render_privacy_page() -> str:
 <footer class="ftr">
   <div>© {yr} StockUpside.io · <a href="/disclaimer" style="color:var(--text3)">Not financial advice</a></div>
   <div class="ftr-r">
+    <a href="/terms">Terms</a> ·
     <a href="/privacy">Privacy</a> ·
     <a href="/disclaimer">Disclaimer</a> ·
     <a href="mailto:hello@stockupside.io">Contact</a>
@@ -3252,6 +3256,7 @@ def render_disclaimer_page() -> str:
 <footer class="ftr">
   <div>© {yr} StockUpside.io · Not financial advice</div>
   <div class="ftr-r">
+    <a href="/terms">Terms</a> ·
     <a href="/privacy">Privacy</a> ·
     <a href="/disclaimer">Disclaimer</a> ·
     <a href="mailto:hello@stockupside.io">Contact</a>
@@ -4053,11 +4058,13 @@ def static_files(path):
         return send_from_directory(PUBLIC_DIR, path)
     return send_from_directory(PUBLIC_DIR, "index.html")
 
-# ── Main ───────────────────────────────────────────────────────────────────────
+# ── Startup (runs once whether launched via `python app.py` or gunicorn) ───────
+init_db()
+threading.Thread(target=nightly_refresh, daemon=True).start()
+threading.Thread(target=weekly_digest, daemon=True).start()
+
+# ── Main (only used for local `python server/app.py` dev runs) ─────────────────
 if __name__ == "__main__":
-    init_db()
-    threading.Thread(target=nightly_refresh, daemon=True).start()
-    threading.Thread(target=weekly_digest, daemon=True).start()
     port = int(os.environ.get("PORT", 5000))
     print(f"\n🚀  StockUpside.io is running at http://localhost:{port}\n")
     # Only open a browser tab in local dev — never on a headless server

@@ -773,12 +773,13 @@ function footer() {
       <a href="/accuracy" class="ftr-nav-link">Accuracy</a>
       <a href="/analyst-track-record" class="ftr-nav-link">Track Record</a>
       <a href="/stocks"   class="ftr-nav-link">All Stocks</a>
+      <a href="/terms"    class="ftr-nav-link">Terms</a>
       <a href="/privacy"  class="ftr-nav-link">Privacy</a>
       <a href="/disclaimer" class="ftr-nav-link">Disclaimer</a>
     </nav>
     <div class="ftr-bottom">
       <div>© ${new Date().getFullYear()} StockUpside.io · Updated daily at midnight EST · <a href="/disclaimer" style="color:var(--text3)">Not financial advice</a></div>
-      <div class="ftr-r"><a href="/privacy">Privacy</a> · <a href="/disclaimer">Disclaimer</a> · <a href="mailto:hello@stockupside.io">Contact</a></div>
+      <div class="ftr-r"><a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="/disclaimer">Disclaimer</a> · <a href="mailto:hello@stockupside.io">Contact</a></div>
     </div>
   </footer>`;
 }
