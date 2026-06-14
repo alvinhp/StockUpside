@@ -48,6 +48,8 @@ let filtered: Stock[]     = [];
 let stats:    StatsResp | null = null;
 let tier      = "free";
 let proToken  = localStorage.getItem("su_token") || "";
+let watchlist: Set<string> = new Set();
+const isWatchlistPage = window.location.pathname === "/watchlist";
 interface EmailPrefs {
   sector: string; consensus: string; min_analysts: number;
   max_pe: number; max_peg: number; momentum: string;
@@ -116,12 +118,56 @@ async function load() {
       minMarketCap = sd.free_filters.min_market_cap;
       minAnalysts  = sd.free_filters.min_analysts;
     }
+
+    if (tier === "pro") {
+      try {
+        const wr = await fetch(`${API}/watchlist?token=${encodeURIComponent(proToken)}`);
+        const wd = await wr.json();
+        watchlist = new Set<string>(wd.tickers || []);
+      } catch {
+        // Non-fatal — watchlist star state just won't be pre-populated
+      }
+    }
+
+    if (isWatchlistPage) {
+      applyFilters(); setLoader(false); renderWatchlistPage();
+      fixStickyOffset();
+      startTicker();
+      return;
+    }
+
     applyFilters(); setLoader(false); renderAll();
     fixStickyOffset();
     startTicker();
   } catch(e) {
     setLoader(false);
     document.getElementById("app")!.innerHTML = errScreen(String(e));
+  }
+}
+
+async function toggleWatchlist(ticker: string, starEl: HTMLElement) {
+  const adding = !watchlist.has(ticker);
+  // Optimistic UI update
+  if (adding) { watchlist.add(ticker); starEl.textContent = "★"; starEl.classList.add("wl-active"); starEl.title = "Remove from watchlist"; }
+  else        { watchlist.delete(ticker); starEl.textContent = "☆"; starEl.classList.remove("wl-active"); starEl.title = "Add to watchlist"; }
+
+  try {
+    const r = await fetch(`${API}/watchlist`, {
+      method: adding ? "POST" : "DELETE",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({token: proToken, ticker}),
+    });
+    if (!r.ok) throw new Error(await r.text());
+    toast(adding ? `${ticker} added to your watchlist` : `${ticker} removed from your watchlist`, "ok");
+    if (isWatchlistPage && !adding) {
+      // Removing from the dedicated watchlist page — drop the row immediately
+      applyFilters(); renderWatchlistRows();
+    }
+  } catch {
+    // Revert on failure
+    if (adding) { watchlist.delete(ticker); starEl.textContent = "☆"; starEl.classList.remove("wl-active"); starEl.title = "Add to watchlist"; }
+    else        { watchlist.add(ticker); starEl.textContent = "★"; starEl.classList.add("wl-active"); starEl.title = "Remove from watchlist"; }
+    toast("Couldn't update watchlist — please try again.", "err");
   }
 }
 
@@ -181,6 +227,9 @@ async function doFreeSubscribe() {
 // ── Filter / Sort ──────────────────────────────────────────────────────────────
 function applyFilters() {
   let s = [...all];
+  if (isWatchlistPage) {
+    s = s.filter(x => !x.locked && watchlist.has(x.ticker));
+  }
   if (query) { const q = query.toLowerCase();
     s = s.filter(x => !x.locked && (x.ticker.toLowerCase().includes(q) || x.name.toLowerCase().includes(q) || x.sector.toLowerCase().includes(q))); }
   if (secFilter !== "All") s = s.filter(x => x.locked || x.sector === secFilter);
@@ -202,7 +251,69 @@ function doSort(key: string) {
   sortAsc = sortKey === key ? !sortAsc : (key === "rank");
   sortKey = key;
   currentPage = 1;
+  if (isWatchlistPage) { applyFilters(); renderWatchlistRows(); return; }
   applyFilters(); renderRows();
+}
+
+// ── Watchlist page ───────────────────────────────────────────────────────────
+function watchlistTable(items: Stock[]): string {
+  if (tier !== "pro") {
+    return `<div class="wl-locked-wrap">
+      <div class="wl-locked-icon">🔒</div>
+      <h2>Watchlists are a Pro feature</h2>
+      <p>Track unlimited stocks across the whole market — upgrade to Pro to
+         build your own watchlist and see it here.</p>
+      <button class="btn-pro" id="wl-upgrade-btn">Unlock Pro →</button>
+    </div>`;
+  }
+  if (items.length === 0) {
+    return `<div class="wl-empty-wrap">
+      <div class="wl-empty-icon">☆</div>
+      <h2>Your watchlist is empty</h2>
+      <p>Click the ☆ next to any stock on <a href="/stocks">All Stocks</a> to add it here.</p>
+    </div>`;
+  }
+  const heads = COLS.map(c => {
+    const act = sortKey === c.k, arrow = act ? (sortAsc ? " ↑" : " ↓") : "";
+    const titleAttr = (c as any).title ? ` title="${(c as any).title}"` : "";
+    return `<th class="th${c.sort ? " sort" : ""}${act ? " act" : ""}"
+                data-k="${c.k}"${titleAttr}>${c.l}${arrow}</th>`;
+  }).join("");
+  return `<table class="tbl">
+    <thead><tr>${heads}</tr></thead>
+    <tbody id="tbody">${items.map(s => row(s)).join("")}</tbody>
+  </table>`;
+}
+
+function renderWatchlistPage() {
+  const items = filtered.filter(x => !x.locked);
+  document.getElementById("app")!.innerHTML = `
+    ${header()}
+    <div class="wl-wrap">
+      <div class="wl-title-row">
+        <h1>★ My Watchlist</h1>
+        ${tier === "pro" ? `<div class="wl-count">${items.length} stock${items.length===1?"":"s"} tracked</div>` : ""}
+      </div>
+      <div class="tbl-wrap">${watchlistTable(items)}</div>
+    </div>
+    ${footer()}
+    ${paywallModal()}
+    <div id="toast-el" class="toast hidden"></div>`;
+  bindGlobals();
+  bindRows();
+  const upg = document.getElementById("wl-upgrade-btn");
+  if (upg) upg.onclick = () => showPW();
+}
+
+function renderWatchlistRows() {
+  const items = filtered.filter(x => !x.locked);
+  const tb = document.getElementById("tbody");
+  if (!tb) { renderWatchlistPage(); return; }
+  tb.innerHTML = items.map(s => row(s)).join("");
+  const cnt = document.querySelector(".wl-count");
+  if (cnt) cnt.textContent = `${items.length} stock${items.length===1?"":"s"} tracked`;
+  bindRows();
+  if (items.length === 0) renderWatchlistPage();
 }
 
 // ── Render helpers ─────────────────────────────────────────────────────────────
@@ -262,6 +373,7 @@ function header() {
       <a href="/accuracy" class="hdr-link">Accuracy</a>
       <a href="/analyst-track-record" class="hdr-link">Track Record</a>
       <a href="/stocks" class="hdr-link">All Stocks</a>
+      <a href="/watchlist" class="hdr-link">My Watchlist</a>
       <div class="live-chip"><span class="live-dot"></span>LIVE</div>
       <div class="refresh-chip">
         <span class="rc-lbl">UPDATES IN</span>
@@ -421,6 +533,7 @@ function controls(sectors: string[], count: number) {
 
 const COLS = [
   {k:"rank",      l:"#",         sort:true},
+  {k:"watchlist", l:"★",         sort:false, title:"Add to your watchlist (Pro)"},
   {k:"ticker",    l:"TICKER",    sort:true},
   {k:"name",      l:"COMPANY",   sort:false},
   {k:"sector",    l:"SECTOR",    sort:true},
@@ -520,6 +633,7 @@ function row(s: Stock): string {
   if (s.locked) return `
     <tr class="tr-locked" data-locked="1">
       <td class="td-rank">${s.rank}</td>
+      <td class="td-watch"><span class="wl-star wl-dim" title="Unlock Pro to use watchlists">☆</span></td>
       <td><span class="tk-lock">???</span></td>
       <td><span class="nm-lock">Unlock Pro to reveal</span></td>
       <td><span class="sec-dim">${s.sector||"—"}</span></td>
@@ -532,7 +646,7 @@ function row(s: Stock): string {
       <td class="dim">—</td>
     </tr>
     <tr class="tr-mobile tr-mobile-locked" data-locked="1">
-      <td colspan="11">
+      <td colspan="12">
         <div class="mobile-card mobile-card-locked" onclick="showPW()">
           <div class="mc-top-row">
             <div class="mc-rank">#${s.rank}</div>
@@ -549,10 +663,14 @@ function row(s: Stock): string {
 
   const medal = s.rank===1?"🥇":s.rank===2?"🥈":s.rank===3?"🥉":"";
   const ytdCls = s.ytd_change >= 0 ? "pos" : "neg";
-  
+  const inWatchlist = watchlist.has(s.ticker);
+  const starCls = inWatchlist ? "wl-star wl-active" : "wl-star";
+  const starChar = inWatchlist ? "★" : "☆";
+
   return `
     <tr class="tr-stock" data-ticker="${s.ticker}">
       <td class="td-rank">${medal||s.rank}</td>
+      <td class="td-watch"><span class="${starCls}" data-watch-ticker="${s.ticker}" title="${inWatchlist ? "Remove from watchlist" : "Add to watchlist"}">${starChar}</span></td>
       <td><a href="/stocks/${s.ticker}" class="tk" style="text-decoration:none" onclick="event.stopPropagation()">${s.ticker}</a></td>
       <td class="td-name">${s.name}</td>
       <td><span class="sec-tag">${sIcon(s.sector)} ${s.sector}</span></td>
@@ -571,13 +689,15 @@ function row(s: Stock): string {
     </tr>
     <!-- Mobile card view (hidden on desktop) -->
     <tr class="tr-mobile" data-ticker="${s.ticker}">
-      <td colspan="11">
+      <td colspan="12">
         <div class="mobile-card" onclick="window.location.href='/stocks/${s.ticker}'">
           <div class="mc-header">
             <div class="mc-top-row">
               <div class="mc-rank">#${s.rank}</div>
               <div class="mc-ticker-wrap">
-                <div class="mc-ticker">${s.ticker}</div>
+                <div class="mc-ticker">${s.ticker}
+                  <span class="${starCls}" data-watch-ticker="${s.ticker}" title="${inWatchlist ? "Remove from watchlist" : "Add to watchlist"}" onclick="event.stopPropagation()">${starChar}</span>
+                </div>
                 <div class="mc-name">${s.name}</div>
               </div>
               <div class="mc-upside-wrap">
@@ -1006,6 +1126,19 @@ function bindEmailPrefs() {
 }
 
 function bindRows() {
+  document.querySelectorAll<HTMLElement>(".wl-star").forEach(star => {
+    star.onclick = (e) => {
+      e.stopPropagation();
+      const ticker = star.dataset.watchTicker;
+      if (!ticker) return; // locked row's star has no ticker
+      if (tier !== "pro") {
+        toast("Watchlists are a Pro feature — upgrade to track your own stocks.", "err");
+        showPW();
+        return;
+      }
+      toggleWatchlist(ticker, star);
+    };
+  });
   document.querySelectorAll<HTMLElement>(".tr-stock").forEach(tr => {
     tr.onclick = (e) => {
       // Don't intercept direct clicks on the ticker <a> tag — browser handles those

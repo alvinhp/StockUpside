@@ -4,7 +4,7 @@ Run: python3 server/app.py
 Serves the REST API on :5000 and static files from /public
 """
 
-import json, sqlite3, time, datetime, hashlib, hmac, secrets, os, math, threading, webbrowser
+import json, sqlite3, time, datetime, hashlib, hmac, secrets, os, math, threading, webbrowser, re
 import smtplib, email.mime.multipart, email.mime.text
 from flask import Flask, jsonify, request, send_from_directory, Response, redirect
 from markupsafe import escape
@@ -748,6 +748,14 @@ def init_db():
         last_seen INTEGER)""")
     con.execute("CREATE INDEX IF NOT EXISTS idx_sessions_email ON sessions(email)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at)")
+
+    # Pro-only watchlist: arbitrary tickers a subscriber wants to track.
+    con.execute("""CREATE TABLE IF NOT EXISTS watchlists(
+        email TEXT NOT NULL,
+        ticker TEXT NOT NULL,
+        added_at INTEGER NOT NULL,
+        PRIMARY KEY (email, ticker))""")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_watchlists_email ON watchlists(email)")
 
     # Per-subscriber digest filter preferences (Pro only).
     # If no row exists for an email, the default top-10 (no filters) is sent.
@@ -2483,6 +2491,83 @@ def api_email_prefs():
     return jsonify({"success": True, "prefs": cleaned, "matching_stocks": matches})
 
 
+@app.route("/api/watchlist", methods=["GET", "POST", "DELETE", "OPTIONS"])
+@limiter.limit("120 per hour")
+def api_watchlist():
+    """Pro-only watchlist of tickers.
+
+    Auth: Pro access token via 'token' query/body param or
+    'Authorization: Bearer <token>' header — same pattern as
+    /api/email-prefs. Email is resolved server-side, never trusted
+    from the client.
+
+    GET    -> list watchlisted tickers joined with current stock data
+    POST   {ticker} -> add a ticker
+    DELETE {ticker} -> remove a ticker
+    """
+    if request.method == "OPTIONS":
+        return Response(status=200)
+
+    token = (
+        request.args.get("token")
+        or (request.get_json(silent=True) or {}).get("token")
+        or request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+    )
+    email_addr = _resolve_token_email(token)
+    if not email_addr:
+        return jsonify({"error": "Pro subscription required"}), 401
+
+    con = get_db()
+
+    if request.method == "GET":
+        rows = con.execute(
+            "SELECT ticker FROM watchlists WHERE email=? ORDER BY added_at DESC",
+            (email_addr,)
+        ).fetchall()
+        con.close()
+        tickers = {r[0] for r in rows}
+
+        stocks = get_stocks_cached()
+        by_ticker = {s["ticker"]: s for s in stocks}
+        matched   = [by_ticker[t] for t in tickers if t in by_ticker]
+        missing   = sorted(tickers - by_ticker.keys())
+
+        return jsonify({"stocks": matched, "tickers": sorted(tickers),
+                        "missing": missing, "total": len(tickers)})
+
+    body   = request.get_json(force=True) or {}
+    ticker = str(body.get("ticker", "")).strip().upper()
+    if not ticker or not re.match(r"^[A-Z0-9.\-]{1,10}$", ticker):
+        con.close()
+        return jsonify({"error": "Invalid ticker"}), 400
+
+    if request.method == "POST":
+        con.execute(
+            "INSERT OR IGNORE INTO watchlists (email, ticker, added_at) VALUES (?, ?, ?)",
+            (email_addr, ticker, int(time.time()))
+        )
+        con.commit()
+    else:  # DELETE
+        con.execute(
+            "DELETE FROM watchlists WHERE email=? AND ticker=?",
+            (email_addr, ticker)
+        )
+        con.commit()
+
+    count = con.execute(
+        "SELECT COUNT(*) FROM watchlists WHERE email=?", (email_addr,)
+    ).fetchone()[0]
+    con.close()
+    return jsonify({"success": True, "ticker": ticker, "total": count})
+
+
+@app.route("/watchlist")
+def watchlist_page():
+    # Same pattern as /stocks — let the frontend (main.js) detect the path
+    # and render the watchlist view client-side.
+    return send_from_directory(PUBLIC_DIR, "index.html")
+
+
 @app.route("/api/refresh", methods=["POST"])
 @limiter.limit("5 per hour")
 def api_refresh():
@@ -2505,7 +2590,7 @@ def api_refresh():
                 ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 logfile.write(f"[{ts}] Manual refresh triggered via /api/refresh\n")
                 proc = subprocess.Popen(
-                    [sys.executable, generate_script],
+                    [sys.executable, "-u", generate_script],
                     stdout=logfile, stderr=logfile,
                 )
                 try:
