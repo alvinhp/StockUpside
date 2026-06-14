@@ -2457,6 +2457,82 @@ def api_refresh():
     return jsonify({"success": True, "message": "Refresh started in background.",
                     "last_updated": datetime.date.today().isoformat()})
 
+def similar_stocks(target: dict, stocks: list, n: int = 5) -> list:
+    """Find stocks with similar fundamentals to `target`.
+
+    Approach: restrict to the same sector (cross-sector valuation
+    comparisons are rarely meaningful — a PEG of 1.5 means something very
+    different in Utilities vs. Technology), then rank by a simple weighted
+    distance over a few normalized fundamental features. This is a
+    deterministic similarity score, not a trained model — no training data,
+    storage, or pipeline required, and it's explainable to users ("similar
+    sector, size, and valuation").
+
+    Features compared (each z-scored within the same-sector candidate pool):
+      - market cap (log scale, since caps span orders of magnitude)
+      - trailing P/E
+      - PEG ratio (only if both stocks have a valid PEG)
+      - upside %
+
+    Returns up to `n` stocks, closest first. Returns fewer (or none) if
+    there isn't enough same-sector data with valid fundamentals — this is
+    expected for thinly-covered sectors and is not an error.
+    """
+    sector = target.get("sector")
+    if not sector or sector == "Unknown":
+        return []
+
+    candidates = [
+        s for s in stocks
+        if s["ticker"] != target["ticker"]
+        and s.get("sector") == sector
+        and (s.get("market_cap_raw") or 0) > 0
+        and (s.get("pe_ratio") or 0) > 0
+    ]
+    if len(candidates) < 2:
+        return []
+
+    import math
+
+    def _log_cap(s):
+        return math.log10(s["market_cap_raw"])
+
+    # Build feature vectors. PEG is included only when BOTH the target and
+    # a candidate have a valid (>0) PEG, since most stocks have peg_ratio=0
+    # (missing data) and including zeros would distort the distance.
+    use_peg = (target.get("peg_ratio") or 0) > 0
+
+    features = ["_log_cap", "pe_ratio", "upside_pct"] + (["peg_ratio"] if use_peg else [])
+    pool = candidates + [target]
+
+    # z-score each feature across the candidate pool (+ target) within this sector
+    stats = {}
+    for f in features:
+        vals = [_log_cap(s) if f == "_log_cap" else (s.get(f) or 0) for s in pool]
+        if use_peg and f == "peg_ratio":
+            vals = [v for s, v in zip(pool, vals) if (s.get("peg_ratio") or 0) > 0]
+        mean = sum(vals) / len(vals) if vals else 0
+        std  = (sum((v - mean) ** 2 for v in vals) / len(vals)) ** 0.5 if vals else 0
+        stats[f] = (mean, std or 1)  # avoid div-by-zero for constant features
+
+    def _z(s, f):
+        val = _log_cap(s) if f == "_log_cap" else (s.get(f) or 0)
+        mean, std = stats[f]
+        return (val - mean) / std
+
+    target_vec = {f: _z(target, f) for f in features}
+
+    scored = []
+    for c in candidates:
+        if use_peg and (c.get("peg_ratio") or 0) <= 0:
+            continue  # skip candidates missing PEG when target has one
+        dist = sum((target_vec[f] - _z(c, f)) ** 2 for f in features) ** 0.5
+        scored.append((dist, c))
+
+    scored.sort(key=lambda x: x[0])
+    return [c for _, c in scored[:n]]
+
+
 @app.route("/stocks/<ticker>")
 def stock_page(ticker):
     ticker = ticker.upper()
@@ -2466,8 +2542,10 @@ def stock_page(ticker):
     if not stock:
         return Response(render_404_page(f"/stocks/{ticker}"), mimetype="text/html"), 404
 
+    similar = similar_stocks(stock, stocks)
+
     # Build fully server-rendered HTML for SEO
-    html = render_stock_page(stock)
+    html = render_stock_page(stock, similar)
     return Response(html, mimetype="text/html")
 
 @app.route("/stocks")
@@ -3589,7 +3667,37 @@ def _momentum_html(s: dict) -> str:
       </div>
     </div>"""
 
-def render_stock_page(s: dict) -> str:
+def _render_similar_stocks(similar: list | None) -> str:
+    """Render the 'Similar Stocks' card for the stock detail page.
+    Returns '' (renders nothing) if there's nothing to show — this is
+    expected for thinly-covered sectors."""
+    if not similar:
+        return ""
+
+    cards = ""
+    for c in similar:
+        sign  = "+" if c["upside_pct"] >= 0 else ""
+        color = "var(--green)" if c["upside_pct"] >= 0 else "var(--red)"
+        cards += f"""
+        <a href="/stocks/{c['ticker']}" class="sim-card">
+          <div class="sim-card-top">
+            <span class="sim-ticker">{c['ticker']}</span>
+            <span class="sim-upside" style="color:{color}">{sign}{c['upside_pct']}%</span>
+          </div>
+          <div class="sim-name">{c['name']}</div>
+          <div class="sim-meta">{c['market_cap']} · P/E {c['pe_ratio']}x · {c['consensus']}</div>
+        </a>"""
+
+    return f"""
+  <div class="sp-similar">
+    <h2>SIMILAR STOCKS</h2>
+    <p class="sp-similar-sub">Other {similar[0]['sector']} stocks with comparable size and valuation.</p>
+    <div class="sim-grid">{cards}
+    </div>
+  </div>"""
+
+
+def render_stock_page(s: dict, similar: list | None = None) -> str:
     # Defense in depth: `s` comes from generate.py's Yahoo Finance fetch.
     # That data isn't directly attacker-controlled, but company names/
     # tickers are still external input rendered into HTML attributes,
@@ -3678,6 +3786,25 @@ def render_stock_page(s: dict) -> str:
     .sp-prose h2 {{ font-family: var(--font-mono); font-size: 11px; letter-spacing: .1em;
                     color: var(--text3); margin-bottom: 12px; }}
     .sp-prose strong {{ color: var(--text); }}
+    .sp-similar {{ background: var(--bg2); border: 1px solid var(--border); border-radius: 8px;
+                   padding: 24px; margin-bottom: 32px; }}
+    .sp-similar h2 {{ font-family: var(--font-mono); font-size: 11px; letter-spacing: .1em;
+                      color: var(--text3); margin-bottom: 4px; }}
+    .sp-similar-sub {{ font-size: 12px; color: var(--text2); margin-bottom: 16px; }}
+    .sim-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+                 gap: 12px; }}
+    .sim-card {{ display: block; background: var(--bg3); border: 1px solid var(--border2);
+                 border-radius: 6px; padding: 12px 14px; text-decoration: none;
+                 transition: border-color .15s; }}
+    .sim-card:hover {{ border-color: var(--accent); }}
+    .sim-card-top {{ display: flex; justify-content: space-between; align-items: baseline;
+                     margin-bottom: 4px; }}
+    .sim-ticker {{ font-family: var(--font-mono); font-weight: 700; font-size: 13px;
+                   color: var(--accent); letter-spacing: .04em; }}
+    .sim-upside {{ font-family: var(--font-mono); font-weight: 700; font-size: 13px; }}
+    .sim-name {{ font-size: 11px; color: var(--text2); overflow: hidden; text-overflow: ellipsis;
+                 white-space: nowrap; margin-bottom: 4px; }}
+    .sim-meta {{ font-size: 10px; color: var(--text3); font-family: var(--font-mono); }}
     .sp-cta   {{ background: linear-gradient(135deg, rgba(240,180,41,.12), rgba(240,180,41,.04));
                  border: 1px solid rgba(240,180,41,.3); border-radius: 8px;
                  padding: 28px; text-align: center; }}
@@ -3912,6 +4039,9 @@ def render_stock_page(s: dict) -> str:
       of its 52-week range of ${s["week52_low"]} – ${s["week52_high"]}.
     </p>
   </div>
+
+  {_render_similar_stocks(similar)}
+
     <div id="stock-accuracy"></div>
   <div class="sp-cta">
     <h3>See all {"{100}"} stocks ranked by analyst upside</h3>
