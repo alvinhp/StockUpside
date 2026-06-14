@@ -4063,4 +4063,8 @@ if __name__ == "__main__":
     # Only open a browser tab in local dev — never on a headless server
     if os.environ.get("ENV", "development") == "development":
         threading.Timer(1.2, lambda: webbrowser.open(f"http://localhost:{port}")).start()
-    app.run(host="0.0.0.0", port=port, debug=False, threaded=True)
+    # Bind to localhost only — nginx (reverse proxy) connects via
+    # localhost:5000. Binding to 0.0.0.0 would expose the Flask dev
+    # server directly to the internet over plain HTTP, bypassing
+    # TLS, HSTS, and nginx-level protections entirely.
+    app.run(host="127.0.0.1", port=port, debug=False, threaded=True)
