@@ -312,7 +312,7 @@ select, input { font-family: var(--font-sans); }
 
 .td-watch { text-align:center;min-width:28px; }
 .wl-star { cursor:pointer;font-size:16px;color:var(--text3);transition:color .15s,transform .1s;display:inline-block; }
-.mc-ticker .wl-star { font-size:14px;margin-left:6px;vertical-align:middle; }
+.mc-ticker .wl-star { font-size:1em;margin-left:6px;vertical-align:middle; }
 .wl-star:hover { color:var(--amber);transform:scale(1.15); }
 .wl-star.wl-active { color:var(--amber); }
 .wl-star.wl-dim { cursor:not-allowed;opacity:.35; }

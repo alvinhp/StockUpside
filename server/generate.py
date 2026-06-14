@@ -450,12 +450,14 @@ def fetch_ticker_row(ticker: str) -> dict | None:
         target_price  = info.get("targetMeanPrice") or 0
         analyst_count = info.get("numberOfAnalystOpinions") or 0
 
-        if current_price <= 0 or target_price <= 0 or analyst_count < 2:
+        if current_price <= 0 or target_price <= 0 or analyst_count < 1:
             return None
 
         upside_pct = round((target_price / current_price - 1) * 100, 1)
-        if upside_pct < 0:
-            return None
+        # Include downside stocks too (negative upside_pct) — excluding them
+        # meant a stock that ran past its average target would silently
+        # disappear from the dataset (confusing, especially for stocks on
+        # a user's watchlist) instead of just showing a negative number.
 
         high_target = info.get("targetHighPrice") or 0
         low_target  = info.get("targetLowPrice")  or 0

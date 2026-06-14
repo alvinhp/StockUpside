@@ -1258,11 +1258,13 @@ function renderNewCoverage(items) {{
   if (!items.length) return '';
   const rows = items.map((s, i) => {{
     const col = CONSENSUS_COLOR[s.consensus] || "#aaa";
+    const upVal = s.curr_upside || s.upside_pct;
+    const upCol = upVal >= 0 ? "#69f0ae" : "#f85149";
     return `<a href="/stocks/${{s.ticker}}" class="ch-row">
       <span class="ch-rank">${{i+1}}</span>
       <span class="ch-ticker">${{s.ticker}}</span>
       <span class="ch-change" style="color:var(--text2)">New analyst coverage</span>
-      <span class="ch-upside" style="color:#69f0ae">+${{s.curr_upside || s.upside_pct}}%</span>
+      <span class="ch-upside" style="color:${{upCol}}">${{upVal >= 0 ? '+' : ''}}${{upVal}}%</span>
       <span class="ch-delta"  style="color:${{col}}">${{s.consensus}}</span>
     </a>`;
   }}).join('');
@@ -1698,7 +1700,11 @@ def digest_email_html(stocks: list, email_addr: str, prefs: dict | None = None) 
     rows_html = ""
     rows_txt  = ""
     for s in picks:
-        color = "#00e676" if s["upside_pct"] >= 40 else "#69f0ae" if s["upside_pct"] >= 20 else "#ffd740"
+        color = ("#00e676" if s["upside_pct"] >= 40 else
+                 "#69f0ae" if s["upside_pct"] >= 20 else
+                 "#ffd740" if s["upside_pct"] >= 0  else
+                 "#f85149")
+        sign  = "+" if s["upside_pct"] >= 0 else ""
         rows_html += f"""
         <tr>
           <td style="padding:10px 12px;font-weight:700;color:#58a6ff;
@@ -1706,12 +1712,12 @@ def digest_email_html(stocks: list, email_addr: str, prefs: dict | None = None) 
           <td style="padding:10px 12px;color:#8b949e;font-size:12px;
                      max-width:160px">{s['name']}</td>
           <td style="padding:10px 12px;font-family:monospace;font-weight:700;
-                     color:{color}">+{s['upside_pct']}%</td>
+                     color:{color}">{sign}{s['upside_pct']}%</td>
           <td style="padding:10px 12px;color:#8b949e;font-size:12px">{s['consensus']}</td>
           <td style="padding:10px 12px;font-family:monospace;
                      color:#8b949e;font-size:11px">{s['analyst_count']} analysts</td>
         </tr>"""
-        rows_txt += f"  {s['rank']:>2}. {s['ticker']:<6}  +{s['upside_pct']}%  {s['consensus']}\n"
+        rows_txt += f"  {s['rank']:>2}. {s['ticker']:<6}  {sign}{s['upside_pct']}%  {s['consensus']}\n"
 
     if is_custom and not fell_back:
         eyebrow   = "YOUR TOP 10"
@@ -3607,7 +3613,11 @@ def render_stock_page(s: dict) -> str:
         if not val or val == 0: return '<span style="color:var(--text3)">N/A</span>'
         try: return fmt(val)
         except: return '<span style="color:var(--text3)">N/A</span>'
-    upside_color = "#00e676" if s["upside_pct"] >= 20 else "#69f0ae" if s["upside_pct"] >= 10 else "#ffd740"
+    upside_color = ("#00e676" if s["upside_pct"] >= 20 else
+                    "#69f0ae" if s["upside_pct"] >= 10 else
+                    "#ffd740" if s["upside_pct"] >= 0  else
+                    "#ff5252")
+    upside_sign = "+" if s["upside_pct"] >= 0 else ""
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -3709,7 +3719,7 @@ def render_stock_page(s: dict) -> str:
 
     <div class="sp-card">
       <div class="sp-card-title">ANALYST PRICE TARGET</div>
-      <div class="sp-upside">+{s["upside_pct"]}%</div>
+      <div class="sp-upside">{upside_sign}{s["upside_pct"]}%</div>
       <div class="sp-upside-sub">implied upside to consensus target</div>
       <div style="margin-top:16px">
         <div class="sp-stat">
@@ -3871,7 +3881,7 @@ def render_stock_page(s: dict) -> str:
       </div>
       <div class="sp-stat">
         <span class="sp-stat-l">Upside to Target</span>
-        <span class="sp-stat-v pos">+{s["upside_pct"]}%</span>
+        <span class="sp-stat-v {'pos' if s['upside_pct'] >= 0 else 'neg'}">{upside_sign}{s["upside_pct"]}%</span>
       </div>
       <div class="sp-stat">
         <span class="sp-stat-l">Last Updated</span>
@@ -3886,8 +3896,8 @@ def render_stock_page(s: dict) -> str:
     <p>
       <strong>{s["name"]} ({s["ticker"]})</strong> is currently trading at
       <strong>${s["current_price"]}</strong> with a Wall Street consensus price target of
-      <strong>${s["target_price"]}</strong>, implying potential upside of
-      <strong>{s["upside_pct"]}%</strong> over the next 12 months.
+      <strong>${s["target_price"]}</strong>, {"implying potential upside of <strong>" + str(s["upside_pct"]) + "%</strong>" if s["upside_pct"] >= 0 else "which is <strong>" + str(abs(s["upside_pct"])) + "%</strong> below the current price"}
+      over the next 12 months.
       {s["analyst_count"]} analysts currently cover {s["ticker"]}, with a consensus rating of
       <strong>{s["consensus"]}</strong> — {bull_pct}% of analysts rate the stock a Buy or Strong Buy.
       The most bullish analyst has a price target of <strong>${s["high_target"]}</strong>,
@@ -3966,7 +3976,11 @@ def render_stocks_index(stocks: list) -> str:
     rows = ""
     for s in stocks:
         ytd_color = "#69f0ae" if s["ytd_change"] >= 0 else "#f85149"
-        upside_color = "#00e676" if s["upside_pct"] >= 40 else "#69f0ae" if s["upside_pct"] >= 20 else "#ffd740"
+        upside_color = ("#00e676" if s["upside_pct"] >= 40 else
+                        "#69f0ae" if s["upside_pct"] >= 20 else
+                        "#ffd740" if s["upside_pct"] >= 0  else
+                        "#f85149")
+        upside_sign  = "+" if s["upside_pct"] >= 0 else ""
         rows += f"""
         <tr>
           <td style="color:var(--text3);font-size:11px;padding:10px 12px">{s["rank"]}</td>
@@ -3979,7 +3993,7 @@ def render_stocks_index(stocks: list) -> str:
           <td style="padding:10px 12px;color:var(--text2);font-size:11px">{s["sector"]}</td>
           <td style="padding:10px 12px;font-family:var(--font-mono);font-size:12px">${s["current_price"]}</td>
           <td style="padding:10px 12px;font-family:var(--font-mono);font-size:13px;
-               font-weight:700;color:{upside_color}">+{s["upside_pct"]}%</td>
+               font-weight:700;color:{upside_color}">{upside_sign}{s["upside_pct"]}%</td>
           <td style="padding:10px 12px;font-size:11px;color:var(--text2)">{s["consensus"]}</td>
           <td style="padding:10px 12px;font-family:var(--font-mono);font-size:12px;
                color:{ytd_color}">{'+' if s['ytd_change'] >= 0 else ''}{s["ytd_change"]}%</td>

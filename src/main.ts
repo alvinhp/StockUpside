@@ -756,7 +756,10 @@ function mobileNavTabs(): string {
     <a href="/changes" class="mob-tab">Rating Changes</a>
     <a href="/accuracy" class="mob-tab">Accuracy</a>
     <a href="/analyst-track-record" class="mob-tab">Track Record</a>
-    <a href="/stocks" class="mob-tab">All Stocks</a>`;
+    <a href="/stocks" class="mob-tab">All Stocks</a>
+    <a href="/watchlist" class="mob-tab">My Watchlist</a>
+    <a href="/terms" class="mob-tab">Terms</a>
+    <a href="/privacy" class="mob-tab">Privacy</a>`;
 }
 
 function footer() {
