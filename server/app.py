@@ -1373,7 +1373,7 @@ def security_headers(r):
 #   SMTP_PORT      e.g. 587  (TLS) or 465 (SSL)
 #   SMTP_USER      your SMTP login / API key username
 #   SMTP_PASS      your SMTP password / API key
-#   EMAIL_FROM     e.g. hello@stockupside.io
+#   EMAIL_FROM     e.g. support@stockupside.io
 #
 # If SMTP_HOST is not set, send_email() prints to stdout (dev mode).
 
@@ -1381,7 +1381,7 @@ _SMTP_HOST  = os.environ.get("SMTP_HOST",  "")
 _SMTP_PORT  = int(os.environ.get("SMTP_PORT", "587"))
 _SMTP_USER  = os.environ.get("SMTP_USER",  "")
 _SMTP_PASS  = os.environ.get("SMTP_PASS",  "")
-_EMAIL_FROM = os.environ.get("EMAIL_FROM", "hello@stockupside.io")
+_EMAIL_FROM = os.environ.get("EMAIL_FROM", "support@stockupside.io")
 _SITE_URL   = os.environ.get("ALLOWED_ORIGIN", "https://stockupside.io")
 
 # Resend (https://resend.com) — preferred email provider. Uses their HTTP
@@ -2611,7 +2611,7 @@ BLOG_POSTS = [
         </p>
         <p>
           Have feedback on the methodology? We'd love to hear it —
-          <a href="mailto:hello@stockupside.io">email us</a>.
+          <a href="mailto:support@stockupside.io">email us</a>.
         </p>
         """,
     },
@@ -3515,7 +3515,7 @@ def render_terms_page() -> str:
     the end of the current billing period; you will retain Pro access until then,
     and will not be charged again afterward.</li>
     <li>Fees are non-refundable except where required by law. If you believe you were
-    charged in error, contact <a href="mailto:hello@stockupside.io">hello@stockupside.io</a>
+    charged in error, contact <a href="mailto:support@stockupside.io">support@stockupside.io</a>
     and we will review the request.</li>
     <li>We reserve the right to change subscription pricing with reasonable advance
     notice. Price changes will not apply to a billing period that has already been
@@ -3561,7 +3561,7 @@ def render_terms_page() -> str:
 
   <h2>12. Contact</h2>
   <p>Questions about these Terms? Email us at
-  <a href="mailto:hello@stockupside.io">hello@stockupside.io</a>.</p>
+  <a href="mailto:support@stockupside.io">support@stockupside.io</a>.</p>
 
   <hr class="legal-divider"/>
   <p style="font-size:11px;color:var(--text3);font-family:var(--font-mono)">
@@ -3577,7 +3577,7 @@ def render_terms_page() -> str:
     <a href="/terms">Terms</a> ·
     <a href="/privacy">Privacy</a> ·
     <a href="/disclaimer">Disclaimer</a> ·
-    <a href="mailto:hello@stockupside.io">Contact</a>
+    <a href="mailto:support@stockupside.io">Contact</a>
   </div>
 </footer>
 </body>
@@ -3682,7 +3682,7 @@ def render_privacy_page() -> str:
   <p>If you join the free list, you will receive a weekly email containing the current
   top 10 stocks by analyst upside. You can unsubscribe at any time by clicking the
   unsubscribe link in any email, or by contacting us at
-  <a href="mailto:hello@stockupside.io">hello@stockupside.io</a>.</p>
+  <a href="mailto:support@stockupside.io">support@stockupside.io</a>.</p>
   <p>Pro subscribers may receive transactional emails (receipts, renewal notices,
   service updates). These are necessary for the service and cannot be opted out of
   while your subscription is active.</p>
@@ -3719,7 +3719,7 @@ def render_privacy_page() -> str:
     <li>Unsubscribe from all communications at any time.</li>
   </ul>
   <p>To exercise any of these rights, email
-  <a href="mailto:hello@stockupside.io">hello@stockupside.io</a> and we will respond
+  <a href="mailto:support@stockupside.io">support@stockupside.io</a> and we will respond
   within 5 business days.</p>
 
   <h2>8. Children's Privacy</h2>
@@ -3734,7 +3734,7 @@ def render_privacy_page() -> str:
 
   <h2>10. Contact</h2>
   <p>Questions about this policy? Email us at
-  <a href="mailto:hello@stockupside.io">hello@stockupside.io</a>.</p>
+  <a href="mailto:support@stockupside.io">support@stockupside.io</a>.</p>
 
   <hr class="legal-divider"/>
   <p style="font-size:11px;color:var(--text3);font-family:var(--font-mono)">
@@ -3749,7 +3749,7 @@ def render_privacy_page() -> str:
     <a href="/terms">Terms</a> ·
     <a href="/privacy">Privacy</a> ·
     <a href="/disclaimer">Disclaimer</a> ·
-    <a href="mailto:hello@stockupside.io">Contact</a>
+    <a href="mailto:support@stockupside.io">Contact</a>
   </div>
 </footer>
 </body>
@@ -3914,7 +3914,7 @@ def render_disclaimer_page() -> str:
     <a href="/terms">Terms</a> ·
     <a href="/privacy">Privacy</a> ·
     <a href="/disclaimer">Disclaimer</a> ·
-    <a href="mailto:hello@stockupside.io">Contact</a>
+    <a href="mailto:support@stockupside.io">Contact</a>
   </div>
 </footer>
 </body>
