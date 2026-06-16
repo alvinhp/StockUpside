@@ -2533,6 +2533,126 @@ def similar_stocks(target: dict, stocks: list, n: int = 5) -> list:
     return [c for _, c in scored[:n]]
 
 
+# ── Sector landing pages ─────────────────────────────────────────────────────
+# yfinance's `sector` field uses these canonical GICS-derived names.
+# Map each to a URL-friendly slug for /sectors/<slug> SEO pages.
+SECTOR_SLUGS = {
+    "Technology":            "technology",
+    "Healthcare":            "healthcare",
+    "Financial Services":    "financial-services",
+    "Consumer Cyclical":     "consumer-cyclical",
+    "Consumer Defensive":    "consumer-defensive",
+    "Communication Services":"communication-services",
+    "Industrials":           "industrials",
+    "Energy":                "energy",
+    "Basic Materials":       "basic-materials",
+    "Real Estate":           "real-estate",
+    "Utilities":             "utilities",
+}
+SECTOR_SLUG_TO_NAME = {v: k for k, v in SECTOR_SLUGS.items()}
+
+
+# ── Blog ─────────────────────────────────────────────────────────────────────
+# Simple in-code post list — no database/CMS needed for a handful of posts.
+# Each post's `content_html` is hand-written HTML (already using site styling
+# conventions), rendered inside the shared blog post template.
+BLOG_POSTS = [
+    {
+        "slug": "how-we-rank-stocks-by-analyst-upside",
+        "title": "How We Rank Stocks by Analyst Upside (And Why Free Users Don't See Penny Stocks)",
+        "date": "2026-06-14",
+        "excerpt": "A look at the methodology behind StockUpside.io's rankings — where the "
+                   "data comes from, how upside is calculated, and why we filter "
+                   "small/micro-cap stocks out of the free top 10.",
+        "content_html": """
+        <p>
+          StockUpside.io ranks stocks by <strong>analyst consensus price target upside</strong> —
+          the percentage difference between a stock's current price and the average price
+          target set by Wall Street analysts covering it. A stock trading at $100 with a
+          $130 average target has 30% upside.
+        </p>
+        <p>
+          The data comes from two sources: the list of tickers we track is built from
+          <strong>SEC EDGAR</strong> filings, and analyst price targets, ratings, and
+          fundamentals come from <strong>Yahoo Finance</strong>. We refresh the full
+          dataset daily.
+        </p>
+        <h2>Why Filter Out Micro-Caps?</h2>
+        <p>
+          Early on, our top 10 by raw upside was dominated by micro-cap and nano-cap
+          stocks — companies with market caps under $250M, often covered by just one
+          or two analysts. A single analyst setting an aggressive price target on a
+          thinly-traded stock can produce eye-popping "upside" numbers that aren't
+          representative of broad Wall Street sentiment, and these stocks carry far
+          higher risk than the headline number suggests.
+        </p>
+        <p>
+          To make the free top 10 more useful for most people, we apply two default
+          filters to the free tier: a minimum market cap of <strong>$250M</strong>
+          (small-cap and above) and a minimum of <strong>5 analysts</strong> covering
+          the stock. This means the free list reflects stocks where there's broader
+          analyst agreement, not a single outlier opinion.
+        </p>
+        <h2>What Pro Users See Differently</h2>
+        <p>
+          Pro subscribers can adjust or remove both filters — including viewing
+          nano-cap stocks with a single analyst, and stocks where the consensus
+          target is actually <em>below</em> the current price (i.e. analysts see
+          downside, not upside). We added downside stocks to the dataset so that a
+          stock that runs past its average target doesn't just disappear — you can
+          still track it, especially useful if it's on your watchlist.
+        </p>
+        <h2>Browse by Sector</h2>
+        <p>
+          If you're interested in a specific industry, our <a href="/sectors">sector
+          pages</a> break down average analyst upside and top picks by sector —
+          from <a href="/sectors/technology">Technology</a> to
+          <a href="/sectors/energy">Energy</a> and everything in between.
+        </p>
+        <p>
+          Have feedback on the methodology? We'd love to hear it —
+          <a href="mailto:hello@stockupside.io">email us</a>.
+        </p>
+        """,
+    },
+]
+BLOG_POSTS_BY_SLUG = {p["slug"]: p for p in BLOG_POSTS}
+
+
+@app.route("/blog")
+def blog_index():
+    return Response(render_blog_index(), mimetype="text/html")
+
+
+@app.route("/blog/<slug>")
+def blog_post(slug):
+    post = BLOG_POSTS_BY_SLUG.get(slug)
+    if not post:
+        return Response(render_404_page(f"/blog/{slug}"), mimetype="text/html"), 404
+    return Response(render_blog_post(post), mimetype="text/html")
+
+
+@app.route("/sectors")
+def sectors_index():
+    stocks = get_stocks_cached()
+    return Response(render_sectors_index(stocks), mimetype="text/html")
+
+
+@app.route("/sectors/<slug>")
+def sector_page(slug):
+    sector_name = SECTOR_SLUG_TO_NAME.get(slug.lower())
+    if not sector_name:
+        return Response(render_404_page(f"/sectors/{slug}"), mimetype="text/html"), 404
+
+    stocks = get_stocks_cached()
+    sector_stocks = [s for s in stocks if s.get("sector") == sector_name]
+    if not sector_stocks:
+        return Response(render_404_page(f"/sectors/{slug}"), mimetype="text/html"), 404
+
+    # sector_stocks inherits the global upside-descending sort from the cache
+    return Response(render_sector_page(sector_name, slug, sector_stocks), mimetype="text/html")
+
+
 @app.route("/stocks/<ticker>")
 def stock_page(ticker):
     ticker = ticker.upper()
@@ -2557,6 +2677,58 @@ def stocks_index():
 def accuracy_page():
     return Response(render_accuracy_page(), mimetype="text/html")
 
+@app.route("/sitemap.xml")
+def sitemap_xml():
+    stocks = get_stocks_cached()
+    base = "https://stockupside.io"
+    today = datetime.date.today().isoformat()
+
+    urls = [
+        (f"{base}/",          "daily", "1.0"),
+        (f"{base}/stocks",    "daily", "0.9"),
+        (f"{base}/sectors",   "daily", "0.8"),
+        (f"{base}/blog",      "weekly", "0.7"),
+        (f"{base}/changes",   "daily", "0.7"),
+        (f"{base}/accuracy",  "weekly", "0.6"),
+        (f"{base}/analyst-track-record", "weekly", "0.6"),
+        (f"{base}/watchlist", "monthly", "0.3"),
+        (f"{base}/terms",     "monthly", "0.2"),
+        (f"{base}/privacy",   "monthly", "0.2"),
+        (f"{base}/disclaimer","monthly", "0.2"),
+    ]
+    for slug in SECTOR_SLUGS.values():
+        urls.append((f"{base}/sectors/{slug}", "daily", "0.7"))
+    for p in BLOG_POSTS:
+        urls.append((f"{base}/blog/{p['slug']}", "monthly", "0.6"))
+    for s in stocks:
+        urls.append((f"{base}/stocks/{s['ticker']}", "daily", "0.6"))
+
+    body = "".join(
+        f"  <url><loc>{loc}</loc><lastmod>{today}</lastmod>"
+        f"<changefreq>{freq}</changefreq><priority>{pri}</priority></url>\n"
+        for loc, freq, pri in urls
+    )
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        f"{body}"
+        "</urlset>"
+    )
+    return Response(xml, mimetype="application/xml")
+
+
+@app.route("/robots.txt")
+def robots_txt():
+    body = (
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Disallow: /api/\n"
+        "\n"
+        "Sitemap: https://stockupside.io/sitemap.xml\n"
+    )
+    return Response(body, mimetype="text/plain")
+
+
 @app.route("/terms")
 def terms_page():
     return Response(render_terms_page(), mimetype="text/html")
@@ -2568,6 +2740,405 @@ def privacy_page():
 @app.route("/disclaimer")
 def disclaimer_page():
     return Response(render_disclaimer_page(), mimetype="text/html")
+
+def render_blog_index() -> str:
+    yr = datetime.date.today().year
+    posts = sorted(BLOG_POSTS, key=lambda p: p["date"], reverse=True)
+
+    cards = ""
+    for p in posts:
+        cards += f"""
+        <a href="/blog/{p['slug']}" class="blog-card">
+          <div class="blog-card-date">{p['date']}</div>
+          <div class="blog-card-title">{p['title']}</div>
+          <div class="blog-card-excerpt">{p['excerpt']}</div>
+        </a>"""
+
+    if not cards:
+        cards = '<p style="color:var(--text3);font-size:13px">No posts yet — check back soon.</p>'
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Blog | StockUpside.io</title>
+  <meta name="description" content="Insights on analyst price targets, sector trends, and how we build StockUpside.io's stock rankings."/>
+  <meta property="og:type"        content="website"/>
+  <meta property="og:title"       content="Blog | StockUpside.io"/>
+  <meta property="og:description" content="Insights on analyst price targets, sector trends, and how we build StockUpside.io's stock rankings."/>
+  <meta property="og:url"         content="https://stockupside.io/blog"/>
+  <meta property="og:image"       content="https://stockupside.io/og-image.png"/>
+  <meta name="twitter:card"       content="summary_large_image"/>
+  <meta name="robots" content="index, follow"/>
+  <link rel="canonical" href="https://stockupside.io/blog"/>
+  <link rel="stylesheet" href="/style.css"/>
+  <style>
+    .blog-wrap {{ max-width:760px;margin:0 auto;padding:32px 20px 64px; }}
+    .blog-wrap h1 {{ font-family:var(--font-mono);font-size:22px;margin-bottom:6px; }}
+    .blog-sub {{ color:var(--text2);font-size:13px;margin-bottom:32px; }}
+    .blog-list {{ display:flex;flex-direction:column;gap:14px; }}
+    .blog-card {{ display:block;background:var(--bg2);border:1px solid var(--border);
+                  border-radius:8px;padding:20px;text-decoration:none;transition:border-color .15s; }}
+    .blog-card:hover {{ border-color:var(--accent); }}
+    .blog-card-date {{ font-family:var(--font-mono);font-size:10px;color:var(--text3);
+                       letter-spacing:.08em;margin-bottom:8px; }}
+    .blog-card-title {{ font-size:16px;font-weight:600;color:var(--text);margin-bottom:6px; }}
+    .blog-card-excerpt {{ font-size:13px;color:var(--text2);line-height:1.6; }}
+  </style>
+</head>
+<body>
+<header class="hdr">
+  <div class="hdr-l">
+    <a href="/" class="brand" style="text-decoration:none">
+      <span class="brand-mark">▲</span>
+      <div><div class="brand-name">STOCKUPSIDE<span class="brand-io">.IO</span></div>
+        <div class="brand-tag">Analyst Price Target Intelligence</div></div>
+    </a>
+  </div>
+  <div class="hdr-r">
+    <a href="/" style="font-family:var(--font-mono);font-size:11px;color:var(--text2)">← Dashboard</a>
+  </div>
+</header>
+
+<div class="blog-wrap">
+  <h1>Blog</h1>
+  <p class="blog-sub">Notes on analyst data, methodology, and what we're building.</p>
+  <div class="blog-list">{cards}
+  </div>
+</div>
+
+<footer class="ftr">
+  <div>© {yr} StockUpside.io · Not financial advice</div>
+  <div class="ftr-r"><a href="/">Home</a> · <a href="/stocks">All Stocks</a> · <a href="/sectors">Sectors</a></div>
+</footer>
+</body>
+</html>"""
+
+
+def render_blog_post(post: dict) -> str:
+    yr = datetime.date.today().year
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>{post['title']} | StockUpside.io Blog</title>
+  <meta name="description" content="{post['excerpt']}"/>
+  <meta property="og:type"        content="article"/>
+  <meta property="og:title"       content="{post['title']}"/>
+  <meta property="og:description" content="{post['excerpt']}"/>
+  <meta property="og:url"         content="https://stockupside.io/blog/{post['slug']}"/>
+  <meta property="og:image"       content="https://stockupside.io/og-image.png"/>
+  <meta property="article:published_time" content="{post['date']}"/>
+  <meta name="twitter:card"       content="summary_large_image"/>
+  <meta name="robots" content="index, follow"/>
+  <link rel="canonical" href="https://stockupside.io/blog/{post['slug']}"/>
+  <link rel="stylesheet" href="/style.css"/>
+  <script type="application/ld+json">
+  {{
+    "@context": "https://schema.org",
+    "@type": "BlogPosting",
+    "headline": "{post['title']}",
+    "datePublished": "{post['date']}",
+    "dateModified": "{post['date']}",
+    "author": {{"@type": "Organization", "name": "StockUpside.io"}},
+    "publisher": {{"@type": "Organization", "name": "StockUpside.io"}},
+    "mainEntityOfPage": "https://stockupside.io/blog/{post['slug']}"
+  }}
+  </script>
+  <style>
+    .post-wrap {{ max-width:720px;margin:0 auto;padding:32px 20px 64px; }}
+    .post-date {{ font-family:var(--font-mono);font-size:10px;color:var(--text3);
+                  letter-spacing:.08em;margin-bottom:10px; }}
+    .post-wrap h1 {{ font-size:26px;font-weight:700;color:var(--text);margin-bottom:24px;
+                     line-height:1.3; }}
+    .post-body {{ font-size:14px;color:var(--text2);line-height:1.85; }}
+    .post-body h2 {{ font-family:var(--font-mono);font-size:13px;letter-spacing:.08em;
+                     color:var(--accent);text-transform:uppercase;margin:32px 0 12px; }}
+    .post-body p {{ margin-bottom:16px; }}
+    .post-body strong {{ color:var(--text); }}
+    .post-body a {{ color:var(--accent); }}
+    .post-back {{ display:inline-block;margin-top:32px;font-family:var(--font-mono);
+                  font-size:12px;color:var(--text2);text-decoration:none; }}
+    .post-back:hover {{ color:var(--text); }}
+  </style>
+</head>
+<body>
+<header class="hdr">
+  <div class="hdr-l">
+    <a href="/" class="brand" style="text-decoration:none">
+      <span class="brand-mark">▲</span>
+      <div><div class="brand-name">STOCKUPSIDE<span class="brand-io">.IO</span></div>
+        <div class="brand-tag">Analyst Price Target Intelligence</div></div>
+    </a>
+  </div>
+  <div class="hdr-r">
+    <a href="/blog" style="font-family:var(--font-mono);font-size:11px;
+       color:var(--text2);margin-right:16px">Blog</a>
+    <a href="/" style="font-family:var(--font-mono);font-size:11px;color:var(--text2)">← Dashboard</a>
+  </div>
+</header>
+
+<div class="post-wrap">
+  <div class="post-date">{post['date']}</div>
+  <h1>{post['title']}</h1>
+  <div class="post-body">{post['content_html']}</div>
+  <a href="/blog" class="post-back">← Back to all posts</a>
+</div>
+
+<footer class="ftr">
+  <div>© {yr} StockUpside.io · Not financial advice</div>
+  <div class="ftr-r"><a href="/">Home</a> · <a href="/stocks">All Stocks</a> · <a href="/sectors">Sectors</a></div>
+</footer>
+</body>
+</html>"""
+
+
+def render_sectors_index(stocks: list) -> str:
+    yr = datetime.date.today().year
+
+    # Aggregate per-sector stats from the live cache
+    agg: dict = {}
+    for s in stocks:
+        sec = s.get("sector")
+        if sec not in SECTOR_SLUGS:
+            continue
+        if sec not in agg:
+            agg[sec] = {"count": 0, "upside_sum": 0.0, "top": None}
+        agg[sec]["count"] += 1
+        agg[sec]["upside_sum"] += s["upside_pct"]
+        if agg[sec]["top"] is None or s["upside_pct"] > agg[sec]["top"]["upside_pct"]:
+            agg[sec]["top"] = s
+
+    cards = ""
+    # Stable order: by stock count, descending, so larger sectors lead
+    for sec, slug in sorted(SECTOR_SLUGS.items(), key=lambda kv: -agg.get(kv[0], {"count": 0})["count"]):
+        data = agg.get(sec)
+        if not data or data["count"] == 0:
+            continue
+        avg_upside = round(data["upside_sum"] / data["count"], 1)
+        top = data["top"]
+        sign = "+" if avg_upside >= 0 else ""
+        color = "var(--green)" if avg_upside >= 0 else "var(--red)"
+        cards += f"""
+        <a href="/sectors/{slug}" class="sec-card">
+          <div class="sec-card-top">
+            <span class="sec-card-name">{sec}</span>
+            <span class="sec-card-avg" style="color:{color}">{sign}{avg_upside}%</span>
+          </div>
+          <div class="sec-card-meta">{data["count"]} stocks tracked · avg analyst upside</div>
+          <div class="sec-card-top-pick">Top pick: <strong>{top["ticker"]}</strong> ({"+" if top["upside_pct"]>=0 else ""}{top["upside_pct"]}%)</div>
+        </a>"""
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Stocks by Sector — Analyst Upside Rankings | StockUpside.io</title>
+  <meta name="description" content="Browse the top stocks by analyst price target upside in each sector — Technology, Healthcare, Energy, and more. Updated daily."/>
+  <meta property="og:type"        content="website"/>
+  <meta property="og:title"       content="Stocks by Sector — Analyst Upside Rankings | StockUpside.io"/>
+  <meta property="og:description" content="See which sectors Wall Street analysts are most bullish on, and the top-ranked stock in each."/>
+  <meta property="og:url"         content="https://stockupside.io/sectors"/>
+  <meta property="og:image"       content="https://stockupside.io/og-image.png"/>
+  <meta name="twitter:card"       content="summary_large_image"/>
+  <link rel="stylesheet" href="/style.css"/>
+  <style>
+    .secs-wrap {{ max-width:1000px;margin:0 auto;padding:32px 20px 64px; }}
+    .secs-wrap h1 {{ font-family:var(--font-mono);font-size:22px;margin-bottom:6px; }}
+    .secs-sub {{ color:var(--text2);font-size:13px;margin-bottom:32px; }}
+    .secs-grid {{ display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px; }}
+    .sec-card {{ display:block;background:var(--bg2);border:1px solid var(--border);
+                 border-radius:8px;padding:18px;text-decoration:none;transition:border-color .15s; }}
+    .sec-card:hover {{ border-color:var(--accent); }}
+    .sec-card-top {{ display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px; }}
+    .sec-card-name {{ font-family:var(--font-mono);font-weight:700;font-size:14px;color:var(--text); }}
+    .sec-card-avg {{ font-family:var(--font-mono);font-weight:700;font-size:14px; }}
+    .sec-card-meta {{ font-size:11px;color:var(--text3);margin-bottom:10px; }}
+    .sec-card-top-pick {{ font-size:12px;color:var(--text2);font-family:var(--font-mono); }}
+    .sec-card-top-pick strong {{ color:var(--accent); }}
+  </style>
+</head>
+<body>
+<header class="hdr">
+  <div class="hdr-l">
+    <a href="/" class="brand" style="text-decoration:none">
+      <span class="brand-mark">▲</span>
+      <div><div class="brand-name">STOCKUPSIDE<span class="brand-io">.IO</span></div>
+        <div class="brand-tag">Analyst Price Target Intelligence</div></div>
+    </a>
+  </div>
+  <div class="hdr-r">
+    <a href="/stocks" style="font-family:var(--font-mono);font-size:11px;
+       color:var(--text2);margin-right:16px">All Stocks</a>
+    <a href="/" style="font-family:var(--font-mono);font-size:11px;color:var(--text2)">← Dashboard</a>
+  </div>
+</header>
+
+<div class="secs-wrap">
+  <h1>Stocks by Sector</h1>
+  <p class="secs-sub">
+    Average analyst price target upside by sector, updated daily. Click a sector to see
+    its full ranked list.
+  </p>
+  <div class="secs-grid">{cards}
+  </div>
+</div>
+
+<footer class="ftr">
+  <div>© {yr} StockUpside.io · Updated daily · Not financial advice</div>
+  <div class="ftr-r"><a href="/">Home</a> · <a href="/stocks">All Stocks</a></div>
+</footer>
+</body>
+</html>"""
+
+
+def render_sector_page(sector_name: str, slug: str, sector_stocks: list) -> str:
+    yr = datetime.date.today().year
+    n  = len(sector_stocks)
+    avg_upside = round(sum(s["upside_pct"] for s in sector_stocks) / n, 1)
+    strong_buy_pct = round(
+        100 * sum(1 for s in sector_stocks if s["consensus"] in ("Strong Buy", "Buy")) / n, 0
+    )
+
+    # sector_stocks already inherits the global upside-descending sort
+    top_n = sector_stocks[:25]
+
+    rows = ""
+    for i, s in enumerate(top_n):
+        sign  = "+" if s["upside_pct"] >= 0 else ""
+        color = "var(--green)" if s["upside_pct"] >= 0 else "var(--red)"
+        rows += f"""
+        <tr>
+          <td style="padding:10px 12px;color:var(--text3);font-family:var(--font-mono);font-size:11px">{i+1}</td>
+          <td style="padding:10px 12px"><a href="/stocks/{s['ticker']}" style="font-family:var(--font-mono);
+              font-weight:700;color:var(--accent);text-decoration:none">{s['ticker']}</a></td>
+          <td style="padding:10px 12px;color:var(--text2);font-size:12px;max-width:220px;
+              overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{s['name']}</td>
+          <td style="padding:10px 12px;font-family:var(--font-mono);text-align:right">${s['current_price']}</td>
+          <td style="padding:10px 12px;font-family:var(--font-mono);text-align:right">${s['target_price']}</td>
+          <td style="padding:10px 12px;font-family:var(--font-mono);font-weight:700;
+              text-align:right;color:{color}">{sign}{s['upside_pct']}%</td>
+          <td style="padding:10px 12px;text-align:right"><span style="color:{_consensus_color(s['consensus'])};
+              font-family:var(--font-mono);font-size:11px;font-weight:700">{s['consensus']}</span></td>
+        </tr>"""
+
+    sign_avg = "+" if avg_upside >= 0 else ""
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Best {sector_name} Stocks by Analyst Upside | StockUpside.io</title>
+  <meta name="description" content="Top {sector_name} stocks ranked by Wall Street analyst consensus price target upside. {n} stocks tracked, average upside {sign_avg}{avg_upside}%. Updated daily."/>
+  <meta property="og:type"        content="website"/>
+  <meta property="og:title"       content="Best {sector_name} Stocks by Analyst Upside | StockUpside.io"/>
+  <meta property="og:description" content="{n} {sector_name} stocks ranked by analyst price target upside. Average upside {sign_avg}{avg_upside}%. Updated daily."/>
+  <meta property="og:url"         content="https://stockupside.io/sectors/{slug}"/>
+  <meta property="og:image"       content="https://stockupside.io/og-image.png"/>
+  <meta name="twitter:card"       content="summary_large_image"/>
+  <link rel="canonical" href="https://stockupside.io/sectors/{slug}"/>
+  <link rel="stylesheet" href="/style.css"/>
+  <style>
+    .secp-wrap {{ max-width:1100px;margin:0 auto;padding:32px 20px 64px; }}
+    .secp-wrap h1 {{ font-family:var(--font-mono);font-size:22px;margin-bottom:6px; }}
+    .secp-sub {{ color:var(--text2);font-size:13px;margin-bottom:24px; }}
+    .secp-stats {{ display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:28px; }}
+    @media(max-width:600px){{ .secp-stats{{grid-template-columns:1fr;}} }}
+    .secp-stat {{ background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:16px; }}
+    .secp-stat-l {{ font-family:var(--font-mono);font-size:9px;color:var(--text3);
+                    letter-spacing:.1em;margin-bottom:8px; }}
+    .secp-stat-v {{ font-family:var(--font-mono);font-size:24px;font-weight:700; }}
+    .secp-tbl-wrap {{ background:var(--bg2);border:1px solid var(--border);border-radius:8px;
+                      overflow-x:auto;margin-bottom:28px; }}
+    .secp-tbl {{ width:100%;border-collapse:collapse;font-size:13px; }}
+    .secp-tbl th {{ padding:10px 12px;text-align:left;font-family:var(--font-mono);font-size:9px;
+                    color:var(--text3);letter-spacing:.1em;border-bottom:1px solid var(--border);
+                    white-space:nowrap; }}
+    .secp-tbl th:nth-child(n+4) {{ text-align:right; }}
+    .secp-tbl tr:not(:last-child) td {{ border-bottom:1px solid var(--border); }}
+    .secp-prose {{ background:var(--bg2);border:1px solid var(--border);border-radius:8px;
+                   padding:24px;line-height:1.8;color:var(--text2);font-size:14px; }}
+    .secp-prose strong {{ color:var(--text); }}
+    .secp-other {{ margin-top:28px;font-size:12px;font-family:var(--font-mono); }}
+    .secp-other a {{ color:var(--text2);margin-right:14px; }}
+  </style>
+</head>
+<body>
+<header class="hdr">
+  <div class="hdr-l">
+    <a href="/" class="brand" style="text-decoration:none">
+      <span class="brand-mark">▲</span>
+      <div><div class="brand-name">STOCKUPSIDE<span class="brand-io">.IO</span></div>
+        <div class="brand-tag">Analyst Price Target Intelligence</div></div>
+    </a>
+  </div>
+  <div class="hdr-r">
+    <a href="/sectors" style="font-family:var(--font-mono);font-size:11px;
+       color:var(--text2);margin-right:16px">All Sectors</a>
+    <a href="/" style="font-family:var(--font-mono);font-size:11px;color:var(--text2)">← Dashboard</a>
+  </div>
+</header>
+
+<div class="secp-wrap">
+  <h1>Best {sector_name} Stocks by Analyst Upside</h1>
+  <p class="secp-sub">
+    Ranked by Wall Street analyst consensus price target upside. Updated daily from
+    {n} {sector_name} stocks we track.
+  </p>
+
+  <div class="secp-stats">
+    <div class="secp-stat">
+      <div class="secp-stat-l">STOCKS TRACKED</div>
+      <div class="secp-stat-v">{n}</div>
+    </div>
+    <div class="secp-stat">
+      <div class="secp-stat-l">AVG ANALYST UPSIDE</div>
+      <div class="secp-stat-v" style="color:{'var(--green)' if avg_upside>=0 else 'var(--red)'}">{sign_avg}{avg_upside}%</div>
+    </div>
+    <div class="secp-stat">
+      <div class="secp-stat-l">BUY / STRONG BUY</div>
+      <div class="secp-stat-v">{strong_buy_pct:.0f}%</div>
+    </div>
+  </div>
+
+  <div class="secp-tbl-wrap">
+    <table class="secp-tbl">
+      <thead><tr>
+        <th>#</th><th>TICKER</th><th>COMPANY</th><th>PRICE</th><th>TARGET</th><th>UPSIDE</th><th>CONSENSUS</th>
+      </tr></thead>
+      <tbody>{rows}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="secp-prose">
+    <p>
+      We track <strong>{n} {sector_name} stocks</strong> with active Wall Street analyst
+      coverage. On average, analysts see <strong>{sign_avg}{avg_upside}% upside</strong> to
+      current consensus price targets across the sector, with
+      <strong>{strong_buy_pct:.0f}%</strong> of stocks rated Buy or Strong Buy.
+      The table above shows the top {len(top_n)} {sector_name} stocks ranked by upside —
+      click any ticker for full analyst breakdowns, price target ranges, and accuracy history.
+    </p>
+  </div>
+
+  <div class="secp-other">
+    Other sectors:
+    {" ".join(f'<a href="/sectors/{s}">{n2}</a>' for n2, s in SECTOR_SLUGS.items() if s != slug)}
+  </div>
+</div>
+
+<footer class="ftr">
+  <div>© {yr} StockUpside.io · Updated daily · Not financial advice</div>
+  <div class="ftr-r"><a href="/">Home</a> · <a href="/stocks">All Stocks</a> · <a href="/sectors">All Sectors</a></div>
+</footer>
+</body>
+</html>"""
+
 
 def render_accuracy_page() -> str:
     yr = datetime.date.today().year
@@ -3733,7 +4304,7 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>{s["ticker"]} Analyst Price Target — {s["name"]} Stock Forecast | StockUpside.io</title>
-  <meta name="description" content="Wall Street analysts have a consensus price target of ${s["target_price"]} for {s["name"]} ({s["ticker"]}), implying {s["upside_pct"]}% upside from the current price of ${s["current_price"]}. {s["analyst_count"]} analysts covered. Consensus: {s["consensus"]}."/>
+  <meta name="description" content="Wall Street analysts have a consensus price target of ${s["target_price"]} for {s["name"]} ({s["ticker"]}), {f'implying {s["upside_pct"]}% upside' if s["upside_pct"] >= 0 else f'which is {abs(s["upside_pct"])}% below'} the current price of ${s["current_price"]}. {s["analyst_count"]} analysts covered. Consensus: {s["consensus"]}. {s["sector"]} sector."/>
   <meta property="og:type"        content="article"/>
   <meta property="og:title"       content="{s["ticker"]} — {s["upside_pct"]}% Analyst Upside | StockUpside.io"/>
   <meta property="og:description" content="{s["analyst_count"]} analysts. Target: ${s["target_price"]}. Current: ${s["current_price"]}. Consensus: {s["consensus"]}."/>
@@ -3745,6 +4316,29 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
   <meta name="twitter:image"      content="https://stockupside.io/og-image.png"/>
   <meta name="robots" content="index, follow"/>
   <link rel="canonical" href="https://stockupside.io/stocks/{s["ticker"]}"/>
+  <script type="application/ld+json">
+  {{
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      {{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://stockupside.io/"}},
+      {{"@type": "ListItem", "position": 2, "name": "{s["sector"]}", "item": "https://stockupside.io/sectors/{SECTOR_SLUGS.get(s["sector"], "")}"}},
+      {{"@type": "ListItem", "position": 3, "name": "{s["ticker"]}", "item": "https://stockupside.io/stocks/{s["ticker"]}"}}
+    ]
+  }}
+  </script>
+  <script type="application/ld+json">
+  {{
+    "@context": "https://schema.org",
+    "@type": "Dataset",
+    "name": "{s["ticker"]} Analyst Price Target Consensus",
+    "description": "Wall Street analyst consensus price target, upside, and rating breakdown for {s["name"]} ({s["ticker"]}), updated daily.",
+    "url": "https://stockupside.io/stocks/{s["ticker"]}",
+    "dateModified": "{s["last_updated"]}",
+    "creator": {{"@type": "Organization", "name": "StockUpside.io", "url": "https://stockupside.io"}},
+    "variableMeasured": ["Analyst Consensus Price Target", "Upside Percentage", "Analyst Rating Consensus"]
+  }}
+  </script>
   <link rel="stylesheet" href="/style.css"/>
   <style>
     .sp-wrap  {{ max-width: 860px; margin: 0 auto; padding: 32px 20px 64px; }}
@@ -3839,7 +4433,7 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
     <div class="sp-rank">Ranked #{s["rank"]} by analyst upside · {s["last_updated"]}</div>
     <div class="sp-ticker">{s["ticker"]}</div>
     <div class="sp-name">{s["name"]}</div>
-    <div class="sp-meta">{s["sector"]} · Market Cap {s["market_cap"]} · P/E {s["pe_ratio"]}x</div>
+    <div class="sp-meta">{f'<a href="/sectors/{SECTOR_SLUGS[s["sector"]]}" style="color:inherit;text-decoration:underline;text-decoration-color:var(--border2)">{s["sector"]}</a>' if s["sector"] in SECTOR_SLUGS else s["sector"]} · Market Cap {s["market_cap"]} · P/E {s["pe_ratio"]}x</div>
   </div>
 
   <div class="sp-grid">

@@ -392,6 +392,8 @@ function header() {
       <a href="/accuracy" class="hdr-link">Accuracy</a>
       <a href="/analyst-track-record" class="hdr-link">Track Record</a>
       <a href="/stocks" class="hdr-link">All Stocks</a>
+      <a href="/sectors" class="hdr-link">Sectors</a>
+      <a href="/blog" class="hdr-link">Blog</a>
       <a href="/watchlist" class="hdr-link">My Watchlist</a>
       <div class="live-chip"><span class="live-dot"></span>LIVE</div>
       <div class="refresh-chip">
@@ -765,6 +767,8 @@ function mobileNavTabs() {
     <a href="/accuracy" class="mob-tab">Accuracy</a>
     <a href="/analyst-track-record" class="mob-tab">Track Record</a>
     <a href="/stocks" class="mob-tab">All Stocks</a>
+    <a href="/sectors" class="mob-tab">Sectors</a>
+    <a href="/blog" class="mob-tab">Blog</a>
     <a href="/watchlist" class="mob-tab">My Watchlist</a>
     <a href="/terms" class="mob-tab">Terms</a>
     <a href="/privacy" class="mob-tab">Privacy</a>`;
@@ -776,6 +780,8 @@ function footer() {
       <a href="/accuracy" class="ftr-nav-link">Accuracy</a>
       <a href="/analyst-track-record" class="ftr-nav-link">Track Record</a>
       <a href="/stocks"   class="ftr-nav-link">All Stocks</a>
+      <a href="/sectors"  class="ftr-nav-link">Sectors</a>
+      <a href="/blog"     class="ftr-nav-link">Blog</a>
       <a href="/terms"    class="ftr-nav-link">Terms</a>
       <a href="/privacy"  class="ftr-nav-link">Privacy</a>
       <a href="/disclaimer" class="ftr-nav-link">Disclaimer</a>
