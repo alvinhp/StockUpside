@@ -1,0 +1,40 @@
+---
+title: Upside Isn't Everything - P/E, PEG, and Momentum Filters
+date: 2026-07-17
+slug: pe-peg-momentum-filters-why-they-matter
+excerpt: A high upside number can mean a real bargain, or it can mean a stock got hammered for a good reason. Here's how P/E, PEG, and momentum filters help separate the two, as well as how to use them on StockUpside.io.
+---
+<p>
+  Analyst consensus upside is the core ranking on StockUpside.io, but it's a single number, and single numbers can be misleading on their own. A stock can show 40% upside because analysts see real value being missed by the market, or because the stock just dropped 35% on bad news and price targets haven't been revised down yet. Upside alone can't tell those two cases apart.
+</p>
+<p>
+  That's the gap our <strong>P/E, PEG, and momentum filters</strong> are meant to close. None of them aim to replace the upside ranking, they are designed aid it, allowing you to let you narrow the list to stocks that also clear a valuation or sentiment-trend bar you set yourself.
+</p>
+<h2>P/E: Undervalued? Overvalued? Fairly valued?</h2>
+<p>
+  Price-to-earnings ratio compares a stock's price to its per-share earnings. It won't tell you whether a stock is a good buy by itself, but it's a great way to flag outliers. A stock with 60%+ upside and a P/E in the single digits is a very different story from one with similar upside and a triple-digit P/E. The first might be cheap and overlooked; the second might be priced on growth expectations that haven't shown up in earnings yet.
+</p>
+<h2>PEG: Growth-Adjusted Valuation</h2>
+<p>
+  P/E on its own penalizes high-growth companies, since fast-growing earnings make today's P/E look inflated relative to where earnings are headed. PEG ratio divides P/E by expected earnings growth rate, which gives a rougher but more growth-aware read on whether a stock's valuation matches its growth narrative. A PEG near or below 1 is the traditional rule-of-thumb threshold for "reasonably priced relative to growth," though it's a heuristic, not a hard rule.
+</p>
+<h2>Momentum: Has Sentiment Been Improving or Fading?</h2>
+<p>
+  Momentum, as we track it, looks at how analyst ratings and price targets for a stock have
+  changed over time, not the stock's price chart. A stock with high upside and improving analyst sentiment is a different setup than one with similar upside where targets have been quietly drifting down for months even as the stock price falls faster. We're still in the early stages of accumulating enough historical snapshots for this to be fully reliable. The feature improves as more data builds up, so treat early momentum reads as directional rather than definitive.
+</p>
+<h2>How to Combine Them</h2>
+<p>
+  A reasonable starting screen: sort by upside, then apply a market cap filter to avoid
+  micro-cap noise (covered in our <a href="/blog/how-we-rank-stocks-by-analyst-upside">ranking
+  methodology post</a>), then add a PEG ceiling filter to gather a list of stocks with the ideal fundamentals (Note: nano and micro-cap stocks aren't necessarily bad investments, but they're often too risky for the average investor). None of these filters are meant to be used individually. They're most useful as a way to ask, "Does this upside number hold up once I account for valuation and trend?"
+</p>
+<h2>Where to Find These Filters</h2>
+<p>
+  All three filters are available on the <a href="/">main rankings page</a> alongside the sector
+  and analyst-count filters. Pro subscribers can combine all filters simultaneously and save
+  filtered views; free users can apply one filter at a time to the visible top 10.
+</p>
+<p>
+  Questions about how a specific filter is calculated? <a href="mailto:hello@stockupside.io">Email us</a>.
+</p>
