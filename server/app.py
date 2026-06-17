@@ -10,6 +10,7 @@ from flask import Flask, jsonify, request, send_from_directory, Response, redire
 from markupsafe import escape
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 import yfinance as yf
 import pandas as pd
@@ -25,6 +26,14 @@ DB_PATH    = os.path.join(BASE_DIR, "server", "cache.db")
 LOG_PATH   = os.path.join(BASE_DIR, "server", "generate.log")
 
 app = Flask(__name__, static_folder=PUBLIC_DIR, static_url_path="")
+
+# Trust exactly one layer of reverse proxy (Digital Ocean / Nginx) for the
+# X-Forwarded-For and X-Forwarded-Proto headers. Without this, get_remote_address()
+# below sees the proxy's IP for every visitor, so all traffic shares one rate-limit
+# bucket. x_for=1 means "trust one hop" — increase only if you add another proxy
+# layer (e.g. a CDN) in front of this one, or it becomes spoofable.
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
 limiter = Limiter(get_remote_address, app=app, default_limits=["200 per hour"])
 
 # Dedicated secret for HMAC-derived tokens (unsubscribe links, etc.) and
@@ -182,116 +191,6 @@ def send_digest_job():
 # ── Stock universe ─────────────────────────────────────────────────────────────
 UNIVERSE = [
     ("NVDA","NVIDIA Corporation","Technology",2.89e12),
-    ("AAPL","Apple Inc.","Technology",3.1e12),
-    ("MSFT","Microsoft Corporation","Technology",3.0e12),
-    ("GOOGL","Alphabet Inc.","Technology",2.1e12),
-    ("AMZN","Amazon.com Inc.","Consumer Cyclical",1.9e12),
-    ("META","Meta Platforms Inc.","Technology",1.4e12),
-    ("TSLA","Tesla Inc.","Consumer Cyclical",1.1e12),
-    ("AVGO","Broadcom Inc.","Technology",780e9),
-    ("ORCL","Oracle Corporation","Technology",420e9),
-    ("CRM","Salesforce Inc.","Technology",310e9),
-    ("AMD","Advanced Micro Devices","Technology",245e9),
-    ("INTC","Intel Corporation","Technology",95e9),
-    ("QCOM","Qualcomm Inc.","Technology",175e9),
-    ("NOW","ServiceNow Inc.","Technology",205e9),
-    ("INTU","Intuit Inc.","Technology",175e9),
-    ("ADBE","Adobe Inc.","Technology",145e9),
-    ("SNOW","Snowflake Inc.","Technology",55e9),
-    ("PLTR","Palantir Technologies","Technology",280e9),
-    ("NET","Cloudflare Inc.","Technology",70e9),
-    ("DDOG","Datadog Inc.","Technology",55e9),
-    ("ZS","Zscaler Inc.","Technology",45e9),
-    ("CRWD","CrowdStrike Holdings","Technology",120e9),
-    ("PANW","Palo Alto Networks","Technology",130e9),
-    ("FTNT","Fortinet Inc.","Technology",65e9),
-    ("MDB","MongoDB Inc.","Technology",20e9),
-    ("UBER","Uber Technologies","Technology",175e9),
-    ("LYFT","Lyft Inc.","Technology",7e9),
-    ("SPOT","Spotify Technology","Technology",88e9),
-    ("RBLX","Roblox Corporation","Technology",30e9),
-    ("U","Unity Software","Technology",10e9),
-    ("JPM","JPMorgan Chase & Co.","Financial Services",680e9),
-    ("BAC","Bank of America Corp.","Financial Services",350e9),
-    ("WFC","Wells Fargo & Co.","Financial Services",215e9),
-    ("GS","Goldman Sachs Group","Financial Services",190e9),
-    ("MS","Morgan Stanley","Financial Services",195e9),
-    ("C","Citigroup Inc.","Financial Services",130e9),
-    ("AXP","American Express Co.","Financial Services",195e9),
-    ("V","Visa Inc.","Financial Services",620e9),
-    ("MA","Mastercard Inc.","Financial Services",495e9),
-    ("PYPL","PayPal Holdings","Financial Services",72e9),
-    ("BRK-B","Berkshire Hathaway","Financial Services",1.0e12),
-    ("BLK","BlackRock Inc.","Financial Services",155e9),
-    ("SCHW","Charles Schwab Corp.","Financial Services",130e9),
-    ("JNJ","Johnson & Johnson","Healthcare",390e9),
-    ("UNH","UnitedHealth Group","Healthcare",430e9),
-    ("LLY","Eli Lilly and Co.","Healthcare",720e9),
-    ("PFE","Pfizer Inc.","Healthcare",155e9),
-    ("ABBV","AbbVie Inc.","Healthcare",325e9),
-    ("MRK","Merck & Co. Inc.","Healthcare",260e9),
-    ("TMO","Thermo Fisher Scientific","Healthcare",195e9),
-    ("DHR","Danaher Corporation","Healthcare",160e9),
-    ("ISRG","Intuitive Surgical","Healthcare",195e9),
-    ("AMGN","Amgen Inc.","Healthcare",155e9),
-    ("GILD","Gilead Sciences","Healthcare",115e9),
-    ("MRNA","Moderna Inc.","Healthcare",14e9),
-    ("REGN","Regeneron Pharmaceuticals","Healthcare",85e9),
-    ("BIIB","Biogen Inc.","Healthcare",25e9),
-    ("VRTX","Vertex Pharmaceuticals","Healthcare",115e9),
-    ("XOM","Exxon Mobil Corp.","Energy",480e9),
-    ("CVX","Chevron Corporation","Energy",275e9),
-    ("COP","ConocoPhillips","Energy",115e9),
-    ("EOG","EOG Resources","Energy",68e9),
-    ("SLB","SLB (Schlumberger)","Energy",60e9),
-    ("MPC","Marathon Petroleum","Energy",58e9),
-    ("OXY","Occidental Petroleum","Energy",46e9),
-    ("WMT","Walmart Inc.","Consumer Defensive",760e9),
-    ("COST","Costco Wholesale","Consumer Defensive",430e9),
-    ("PG","Procter & Gamble","Consumer Defensive",365e9),
-    ("KO","Coca-Cola Co.","Consumer Defensive",290e9),
-    ("PEP","PepsiCo Inc.","Consumer Defensive",200e9),
-    ("MCD","McDonald's Corporation","Consumer Cyclical",200e9),
-    ("SBUX","Starbucks Corporation","Consumer Cyclical",82e9),
-    ("NKE","Nike Inc.","Consumer Cyclical",95e9),
-    ("TGT","Target Corporation","Consumer Defensive",56e9),
-    ("HD","Home Depot Inc.","Consumer Cyclical",385e9),
-    ("LOW","Lowe's Companies","Consumer Cyclical",155e9),
-    ("GM","General Motors Co.","Consumer Cyclical",48e9),
-    ("F","Ford Motor Company","Consumer Cyclical",43e9),
-    ("RIVN","Rivian Automotive","Consumer Cyclical",14e9),
-    ("LUV","Southwest Airlines","Industrials",17e9),
-    ("DAL","Delta Air Lines","Industrials",25e9),
-    ("UAL","United Airlines","Industrials",20e9),
-    ("BA","Boeing Company","Industrials",130e9),
-    ("GE","GE Aerospace","Industrials",250e9),
-    ("CAT","Caterpillar Inc.","Industrials",165e9),
-    ("DE","Deere & Company","Industrials",110e9),
-    ("HON","Honeywell International","Industrials",140e9),
-    ("RTX","RTX Corporation","Industrials",175e9),
-    ("LMT","Lockheed Martin","Industrials",115e9),
-    ("NOC","Northrop Grumman","Industrials",65e9),
-    ("UPS","United Parcel Service","Industrials",95e9),
-    ("FDX","FedEx Corporation","Industrials",57e9),
-    ("NFLX","Netflix Inc.","Communication Services",500e9),
-    ("DIS","Walt Disney Company","Communication Services",205e9),
-    ("CMCSA","Comcast Corporation","Communication Services",150e9),
-    ("T","AT&T Inc.","Communication Services",165e9),
-    ("VZ","Verizon Communications","Communication Services",170e9),
-    ("TMUS","T-Mobile US Inc.","Communication Services",275e9),
-    ("ABNB","Airbnb Inc.","Consumer Cyclical",88e9),
-    ("BKNG","Booking Holdings","Consumer Cyclical",165e9),
-    ("NEE","NextEra Energy","Utilities",145e9),
-    ("DUK","Duke Energy Corp.","Utilities",88e9),
-    ("SO","Southern Company","Utilities",88e9),
-    ("AMT","American Tower Corp.","Real Estate",95e9),
-    ("PLD","Prologis Inc.","Real Estate",115e9),
-    ("EQIX","Equinix Inc.","Real Estate",85e9),
-    ("SPG","Simon Property Group","Real Estate",55e9),
-    ("NEM","Newmont Corporation","Basic Materials",52e9),
-    ("FCX","Freeport-McMoRan Inc.","Basic Materials",68e9),
-    ("APD","Air Products & Chemicals","Basic Materials",58e9),
-    ("SHW","Sherwin-Williams Co.","Basic Materials",90e9),
 ]
 
 import time
@@ -2658,6 +2557,7 @@ def sector_page(slug):
 
 
 @app.route("/stocks/<ticker>")
+@limiter.limit("300 per hour")
 def stock_page(ticker):
     ticker = ticker.upper()
     stocks = get_stocks_cached()
