@@ -1373,7 +1373,7 @@ def security_headers(r):
 #   SMTP_PORT      e.g. 587  (TLS) or 465 (SSL)
 #   SMTP_USER      your SMTP login / API key username
 #   SMTP_PASS      your SMTP password / API key
-#   EMAIL_FROM     e.g. support@stockupside.io
+#   EMAIL_FROM     e.g. hello@stockupside.io
 #
 # If SMTP_HOST is not set, send_email() prints to stdout (dev mode).
 
@@ -1381,7 +1381,7 @@ _SMTP_HOST  = os.environ.get("SMTP_HOST",  "")
 _SMTP_PORT  = int(os.environ.get("SMTP_PORT", "587"))
 _SMTP_USER  = os.environ.get("SMTP_USER",  "")
 _SMTP_PASS  = os.environ.get("SMTP_PASS",  "")
-_EMAIL_FROM = os.environ.get("EMAIL_FROM", "support@stockupside.io")
+_EMAIL_FROM = os.environ.get("EMAIL_FROM", "hello@stockupside.io")
 _SITE_URL   = os.environ.get("ALLOWED_ORIGIN", "https://stockupside.io")
 
 # Resend (https://resend.com) — preferred email provider. Uses their HTTP
@@ -2553,70 +2553,73 @@ SECTOR_SLUG_TO_NAME = {v: k for k, v in SECTOR_SLUGS.items()}
 
 
 # ── Blog ─────────────────────────────────────────────────────────────────────
-# Simple in-code post list — no database/CMS needed for a handful of posts.
-# Each post's `content_html` is hand-written HTML (already using site styling
-# conventions), rendered inside the shared blog post template.
-BLOG_POSTS = [
-    {
-        "slug": "how-we-rank-stocks-by-analyst-upside",
-        "title": "How We Rank Stocks by Analyst Upside (And Why Free Users Don't See Penny Stocks)",
-        "date": "2026-06-14",
-        "excerpt": "A look at the methodology behind StockUpside.io's rankings — where the "
-                   "data comes from, how upside is calculated, and why we filter "
-                   "small/micro-cap stocks out of the free top 10.",
-        "content_html": """
-        <p>
-          StockUpside.io ranks stocks by <strong>analyst consensus price target upside</strong> —
-          the percentage difference between a stock's current price and the average price
-          target set by Wall Street analysts covering it. A stock trading at $100 with a
-          $130 average target has 30% upside.
-        </p>
-        <p>
-          The data comes from two sources: the list of tickers we track is built from
-          <strong>SEC EDGAR</strong> filings, and analyst price targets, ratings, and
-          fundamentals come from <strong>Yahoo Finance</strong>. We refresh the full
-          dataset daily.
-        </p>
-        <h2>Why Filter Out Micro-Caps?</h2>
-        <p>
-          Early on, our top 10 by raw upside was dominated by micro-cap and nano-cap
-          stocks — companies with market caps under $250M, often covered by just one
-          or two analysts. A single analyst setting an aggressive price target on a
-          thinly-traded stock can produce eye-popping "upside" numbers that aren't
-          representative of broad Wall Street sentiment, and these stocks carry far
-          higher risk than the headline number suggests.
-        </p>
-        <p>
-          To make the free top 10 more useful for most people, we apply two default
-          filters to the free tier: a minimum market cap of <strong>$250M</strong>
-          (small-cap and above) and a minimum of <strong>5 analysts</strong> covering
-          the stock. This means the free list reflects stocks where there's broader
-          analyst agreement, not a single outlier opinion.
-        </p>
-        <h2>What Pro Users See Differently</h2>
-        <p>
-          Pro subscribers can adjust or remove both filters — including viewing
-          nano-cap stocks with a single analyst, and stocks where the consensus
-          target is actually <em>below</em> the current price (i.e. analysts see
-          downside, not upside). We added downside stocks to the dataset so that a
-          stock that runs past its average target doesn't just disappear — you can
-          still track it, especially useful if it's on your watchlist.
-        </p>
-        <h2>Browse by Sector</h2>
-        <p>
-          If you're interested in a specific industry, our <a href="/sectors">sector
-          pages</a> break down average analyst upside and top picks by sector —
-          from <a href="/sectors/technology">Technology</a> to
-          <a href="/sectors/energy">Energy</a> and everything in between.
-        </p>
-        <p>
-          Have feedback on the methodology? We'd love to hear it —
-          <a href="mailto:support@stockupside.io">email us</a>.
-        </p>
-        """,
-    },
-]
-BLOG_POSTS_BY_SLUG = {p["slug"]: p for p in BLOG_POSTS}
+# Posts live as individual files in server/blog_posts/, each with a simple
+# frontmatter header (key: value lines between --- markers) followed by the
+# post body as raw HTML. This means writing a new post is just creating a
+# new file and restarting (or, since we reload on every blog request below,
+# not even that) — no code changes, no redeploy of app.py needed.
+#
+# Example file: server/blog_posts/my-new-post.html
+# ---
+# title: My Post Title
+# date: 2026-06-20
+# slug: my-new-post
+# excerpt: One or two sentences shown on the blog index and in meta tags.
+# ---
+# <p>Your HTML content here. Use the same tags as other posts (h2, p,
+# strong, a) — they already match the site's styling.</p>
+
+BLOG_POSTS_DIR = os.path.join(BASE_DIR, "server", "blog_posts")
+
+
+def _parse_post_file(path: str) -> dict | None:
+    """Parse a single post file: '---\\nkey: value\\n...\\n---\\n<html body>'.
+    Returns None (and prints a warning) if the file is malformed, rather
+    than crashing the whole blog on one bad post."""
+    try:
+        raw = open(path, "r", encoding="utf-8").read()
+    except OSError as e:
+        print(f"  ⚠  Blog: couldn't read {path}: {e}")
+        return None
+
+    parts = raw.split("---", 2)
+    if len(parts) < 3:
+        print(f"  ⚠  Blog: {path} is missing '---' frontmatter delimiters — skipped")
+        return None
+
+    _, frontmatter, body = parts
+    meta: dict = {}
+    for line in frontmatter.strip().splitlines():
+        line = line.strip()
+        if not line or ":" not in line:
+            continue
+        key, _, val = line.partition(":")
+        meta[key.strip()] = val.strip()
+
+    required = ("title", "date", "slug", "excerpt")
+    missing  = [k for k in required if not meta.get(k)]
+    if missing:
+        print(f"  ⚠  Blog: {path} is missing required field(s) {missing} — skipped")
+        return None
+
+    meta["content_html"] = body.strip()
+    return meta
+
+
+def load_blog_posts() -> list:
+    """Load and parse every .html post file in BLOG_POSTS_DIR. Re-reads
+    from disk on every call (cheap — a handful of small files) so new
+    posts appear immediately without restarting the server."""
+    if not os.path.isdir(BLOG_POSTS_DIR):
+        return []
+    posts = []
+    for fname in sorted(os.listdir(BLOG_POSTS_DIR)):
+        if not fname.endswith(".html"):
+            continue
+        post = _parse_post_file(os.path.join(BLOG_POSTS_DIR, fname))
+        if post:
+            posts.append(post)
+    return posts
 
 
 @app.route("/blog")
@@ -2626,7 +2629,8 @@ def blog_index():
 
 @app.route("/blog/<slug>")
 def blog_post(slug):
-    post = BLOG_POSTS_BY_SLUG.get(slug)
+    posts = load_blog_posts()
+    post  = next((p for p in posts if p["slug"] == slug), None)
     if not post:
         return Response(render_404_page(f"/blog/{slug}"), mimetype="text/html"), 404
     return Response(render_blog_post(post), mimetype="text/html")
@@ -2698,7 +2702,7 @@ def sitemap_xml():
     ]
     for slug in SECTOR_SLUGS.values():
         urls.append((f"{base}/sectors/{slug}", "daily", "0.7"))
-    for p in BLOG_POSTS:
+    for p in load_blog_posts():
         urls.append((f"{base}/blog/{p['slug']}", "monthly", "0.6"))
     for s in stocks:
         urls.append((f"{base}/stocks/{s['ticker']}", "daily", "0.6"))
@@ -2743,7 +2747,7 @@ def disclaimer_page():
 
 def render_blog_index() -> str:
     yr = datetime.date.today().year
-    posts = sorted(BLOG_POSTS, key=lambda p: p["date"], reverse=True)
+    posts = sorted(load_blog_posts(), key=lambda p: p["date"], reverse=True)
 
     cards = ""
     for p in posts:
@@ -3515,7 +3519,7 @@ def render_terms_page() -> str:
     the end of the current billing period; you will retain Pro access until then,
     and will not be charged again afterward.</li>
     <li>Fees are non-refundable except where required by law. If you believe you were
-    charged in error, contact <a href="mailto:support@stockupside.io">support@stockupside.io</a>
+    charged in error, contact <a href="mailto:hello@stockupside.io">hello@stockupside.io</a>
     and we will review the request.</li>
     <li>We reserve the right to change subscription pricing with reasonable advance
     notice. Price changes will not apply to a billing period that has already been
@@ -3561,7 +3565,7 @@ def render_terms_page() -> str:
 
   <h2>12. Contact</h2>
   <p>Questions about these Terms? Email us at
-  <a href="mailto:support@stockupside.io">support@stockupside.io</a>.</p>
+  <a href="mailto:hello@stockupside.io">hello@stockupside.io</a>.</p>
 
   <hr class="legal-divider"/>
   <p style="font-size:11px;color:var(--text3);font-family:var(--font-mono)">
@@ -3577,7 +3581,7 @@ def render_terms_page() -> str:
     <a href="/terms">Terms</a> ·
     <a href="/privacy">Privacy</a> ·
     <a href="/disclaimer">Disclaimer</a> ·
-    <a href="mailto:support@stockupside.io">Contact</a>
+    <a href="mailto:hello@stockupside.io">Contact</a>
   </div>
 </footer>
 </body>
@@ -3682,7 +3686,7 @@ def render_privacy_page() -> str:
   <p>If you join the free list, you will receive a weekly email containing the current
   top 10 stocks by analyst upside. You can unsubscribe at any time by clicking the
   unsubscribe link in any email, or by contacting us at
-  <a href="mailto:support@stockupside.io">support@stockupside.io</a>.</p>
+  <a href="mailto:hello@stockupside.io">hello@stockupside.io</a>.</p>
   <p>Pro subscribers may receive transactional emails (receipts, renewal notices,
   service updates). These are necessary for the service and cannot be opted out of
   while your subscription is active.</p>
@@ -3719,7 +3723,7 @@ def render_privacy_page() -> str:
     <li>Unsubscribe from all communications at any time.</li>
   </ul>
   <p>To exercise any of these rights, email
-  <a href="mailto:support@stockupside.io">support@stockupside.io</a> and we will respond
+  <a href="mailto:hello@stockupside.io">hello@stockupside.io</a> and we will respond
   within 5 business days.</p>
 
   <h2>8. Children's Privacy</h2>
@@ -3734,7 +3738,7 @@ def render_privacy_page() -> str:
 
   <h2>10. Contact</h2>
   <p>Questions about this policy? Email us at
-  <a href="mailto:support@stockupside.io">support@stockupside.io</a>.</p>
+  <a href="mailto:hello@stockupside.io">hello@stockupside.io</a>.</p>
 
   <hr class="legal-divider"/>
   <p style="font-size:11px;color:var(--text3);font-family:var(--font-mono)">
@@ -3749,7 +3753,7 @@ def render_privacy_page() -> str:
     <a href="/terms">Terms</a> ·
     <a href="/privacy">Privacy</a> ·
     <a href="/disclaimer">Disclaimer</a> ·
-    <a href="mailto:support@stockupside.io">Contact</a>
+    <a href="mailto:hello@stockupside.io">Contact</a>
   </div>
 </footer>
 </body>
@@ -3914,7 +3918,7 @@ def render_disclaimer_page() -> str:
     <a href="/terms">Terms</a> ·
     <a href="/privacy">Privacy</a> ·
     <a href="/disclaimer">Disclaimer</a> ·
-    <a href="mailto:support@stockupside.io">Contact</a>
+    <a href="mailto:hello@stockupside.io">Contact</a>
   </div>
 </footer>
 </body>
