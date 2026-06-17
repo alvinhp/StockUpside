@@ -881,13 +881,13 @@ function paywallModal() {
           <div class="plan-name">Pro Monthly</div>
           <div class="plan-price">$29<span>/mo</span></div>
           <ul>
-            <li>✓ Full top 2000+ ranked list</li>
+            <li>✓ Full top 3500+ ranked list</li>
             <li>✓ Filter by sector, consensus, momentum, and more</li>
             <li>✓ Unlimited watchlist</li>
             <li>✓ Weekly stock digest based on filters</li>
-            <li>✓ Everything in free tier</li>
             <li>✓ Priority support</li>
             <li>✓ CSV export (Coming soon)</li>
+            <li>✓ Everything in free tier</li>
           </ul>
           <input type="email" id="pw-email" class="pw-email" placeholder="your@email.com" />
           <button class="btn-sub" id="pw-sub">Get Pro Access →</button>
@@ -899,8 +899,6 @@ function paywallModal() {
           <div class="plan-save">Save $149 vs monthly</div>
           <ul>
             <li>✓ Everything in Monthly</li>
-            <li>✓ 90-day historical data</li>
-            <li>✓ REST API access (Coming soon)</li>
           </ul>
           <button class="btn-sub btn-sub-sec" id="pw-ann">Get Annual →</button>
         </div>

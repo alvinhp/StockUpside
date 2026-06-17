@@ -80,14 +80,17 @@ MIT — use commercially, modify freely.
 - Created pages (100 stocks per page)
 - Added login features for pro users
 - Changed generate.py to update the cache per 50 stocks. Also saves data if process times out.
+- Added blog posts
+- Added watchlist
+- Enabled email sending features
+- Added market cap filters
+- Improved SEO
+- Similar stocks in /stocks/TICKER page
+- 
 
 ## TO DO LIST
-- Fix email sending features
-- Better SEO optimization
-- Filter by market cap
-- Watchlist: Let free users save 5 stocks, pro users can save unlimited
-- Post on Reddit (Discuss top 10 stock picks)
-- Post on Twitter/X (Discuss top 10 stock picks)
+- Post on Reddit (User 9:1 rule)
+- Post on Twitter/X (Be active in fintwt)
 - Get first paying users
 
 ## TO DO LIST (After $100 - $1k MRR)
