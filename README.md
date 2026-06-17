@@ -15,6 +15,8 @@ stockupside-io/
 │   ├── style.css        # Full Bloomberg-terminal CSS
 │   └── main.js          # Compiled from main.ts (pre-built)
 ├── server/
+│   │   ├── blog_posts
+│   │   └── html blog posts ...
 │   ├── app.py           # Flask backend + REST API
 │   └── cache.db         # SQLite cache (auto-created)
 ├── tsconfig.json

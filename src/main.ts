@@ -1140,7 +1140,7 @@ function bindRows() {
       const ticker = star.dataset.watchTicker;
       if (!ticker) return; // locked row's star has no ticker
       if (tier !== "pro") {
-        toast("Watchlists are a Pro feature — upgrade to track your own stocks.", "err");
+        toast("Watchlists are a Pro feature. Upgrade to track your own stocks.", "err");
         showPW();
         return;
       }
