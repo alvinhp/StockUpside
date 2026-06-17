@@ -228,6 +228,18 @@ def save_snapshot(stocks: list):
 
 # ── Universe fetch ─────────────────────────────────────────────────────────────
 def get_full_universe() -> list:
+    # Real warrant/unit/rights tickers follow a specific pattern: a base
+    # SPAC ticker (typically 3-4 letters) immediately followed by exactly
+    # one of these suffix letters, with NO other valid base ticker of that
+    # exact length existing independently. The previous version matched
+    # any ticker *ending* in W/U/R, which silently dropped real common
+    # stocks like HWM, LOW, NOW, DLR, and CHTR — none of which are SPAC
+    # derivatives. We instead check the SEC's own per-entry classification
+    # where available, and fall back to a much narrower length-based rule:
+    # only treat trailing W/U/R/WS as a warrant/unit suffix when the
+    # ticker is 5 characters long (4-letter base + 1 suffix char), which
+    # matches how exchanges actually construct these symbols. This still
+    # isn't perfect, but it stops dropping legitimate 3-4 letter tickers.
     JUNK_SUFFIXES   = ("W", "WS", "U", "R")
     JUNK_SUBSTRINGS = ("ETF","FUND","TRUST","REIT","NOTE","BOND",
                        "SPAC","BLANK","ACQUISITION","HOLDINGS","BLANK CHECK")
@@ -243,7 +255,12 @@ def get_full_universe() -> list:
             name = entry.get("title",  "").strip().upper()
             if not t or len(t) > 5 or "." in t or "-" in t:
                 continue
-            if any(t.endswith(sfx) for sfx in JUNK_SUFFIXES) and len(t) > 2:
+            # Only filter as a warrant/unit suffix when the ticker is
+            # exactly 5 chars (4-letter SPAC base + 1 suffix char). A
+            # 3-letter ticker like HWM or a 4-letter one like LOW/NOW/DLR
+            # is virtually never a warrant and should NOT be dropped just
+            # because it happens to end in W/U/R.
+            if len(t) == 5 and any(t.endswith(sfx) for sfx in JUNK_SUFFIXES):
                 continue
             if any(kw in name for kw in JUNK_SUBSTRINGS):
                 continue
@@ -429,6 +446,16 @@ def fetch_ticker_row(ticker: str) -> dict | None:
             info  = t_obj.info
             if info and len(info) < 10:
                 raise ValueError("Stub response — likely rate limited")
+            # A "complete-looking" info dict can still be missing
+            # targetMeanPrice on a given pull even though the ticker does
+            # have analyst coverage — this happens often enough under
+            # load that treating it as permanent (no coverage) instead of
+            # transient (bad pull) was silently dropping real, covered
+            # stocks like DOCN from the dataset for an entire day's run.
+            # Retry a couple more times before accepting "no target" as
+            # the real answer.
+            if not info.get("targetMeanPrice") and attempt < retries - 1:
+                raise ValueError("Missing targetMeanPrice — retrying before giving up")
             _register_rate_limit_ok()
             break
         except Exception as e:
@@ -438,6 +465,9 @@ def fetch_ticker_row(ticker: str) -> dict | None:
                 print(f"  ⚠  Rate limited ({ticker}), shared pause {wait:.0f}s "
                       f"(streak: {streak})")
                 _wait_for_shared_pause()
+            elif "Missing targetMeanPrice" in err:
+                print(f"  →  {ticker}: no analyst target on attempt {attempt + 1}, retrying...")
+                time.sleep(1.0 + random.uniform(0.5, 1.5))
             else:
                 print(f"  ⚠  Skipped {ticker}: {e}")
                 break

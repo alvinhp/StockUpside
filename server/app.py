@@ -1,5 +1,5 @@
 """
-StockUpside.io — Flask Backend
+StockUpside.io - Flask Backend
 Run: python3 server/app.py
 Serves the REST API on :5000 and static files from /public
 """
@@ -4207,15 +4207,15 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>{s["ticker"]} Analyst Price Target — {s["name"]} Stock Forecast | StockUpside.io</title>
+  <title>{s["ticker"]} Analyst Price Target - {s["name"]} Stock Forecast | StockUpside.io</title>
   <meta name="description" content="Wall Street analysts have a consensus price target of ${s["target_price"]} for {s["name"]} ({s["ticker"]}), {f'implying {s["upside_pct"]}% upside' if s["upside_pct"] >= 0 else f'which is {abs(s["upside_pct"])}% below'} the current price of ${s["current_price"]}. {s["analyst_count"]} analysts covered. Consensus: {s["consensus"]}. {s["sector"]} sector."/>
   <meta property="og:type"        content="article"/>
-  <meta property="og:title"       content="{s["ticker"]} — {s["upside_pct"]}% Analyst Upside | StockUpside.io"/>
+  <meta property="og:title"       content="{s["ticker"]} - {s["upside_pct"]}% Analyst Upside | StockUpside.io"/>
   <meta property="og:description" content="{s["analyst_count"]} analysts. Target: ${s["target_price"]}. Current: ${s["current_price"]}. Consensus: {s["consensus"]}."/>
   <meta property="og:url"         content="https://stockupside.io/stocks/{s["ticker"]}"/>
   <meta property="og:image"       content="https://stockupside.io/og-image.png"/>
   <meta name="twitter:card"       content="summary_large_image"/>
-  <meta name="twitter:title"      content="{s["ticker"]} — {s["upside_pct"]}% Analyst Upside | StockUpside.io"/>
+  <meta name="twitter:title"      content="{s["ticker"]} - {s["upside_pct"]}% Analyst Upside | StockUpside.io"/>
   <meta name="twitter:description" content="{s["analyst_count"]} analysts covering {s["ticker"]}. Consensus: {s["consensus"]}. Target: ${s["target_price"]}."/>
   <meta name="twitter:image"      content="https://stockupside.io/og-image.png"/>
   <meta name="robots" content="index, follow"/>
@@ -4371,7 +4371,7 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
     </div>
 
     <div class="sp-card">
-      <div class="sp-card-title">ANALYST CONSENSUS — {s["consensus"].upper()}</div>
+      <div class="sp-card-title">ANALYST CONSENSUS - {s["consensus"].upper()}</div>
       <div class="rbar-wrap">
         <div class="rbar-row">
           <span class="rbar-lbl" style="color:#00e676">Strong Buy</span>
@@ -4524,7 +4524,7 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
       <strong>${s["target_price"]}</strong>, {"implying potential upside of <strong>" + str(s["upside_pct"]) + "%</strong>" if s["upside_pct"] >= 0 else "which is <strong>" + str(abs(s["upside_pct"])) + "%</strong> below the current price"}
       over the next 12 months.
       {s["analyst_count"]} analysts currently cover {s["ticker"]}, with a consensus rating of
-      <strong>{s["consensus"]}</strong> — {bull_pct}% of analysts rate the stock a Buy or Strong Buy.
+      <strong>{s["consensus"]}</strong> - {bull_pct}% of analysts rate the stock a Buy or Strong Buy.
       The most bullish analyst has a price target of <strong>${s["high_target"]}</strong>,
       while the most cautious has a target of <strong>${s["low_target"]}</strong>.
     </p>
@@ -4632,7 +4632,7 @@ def render_stocks_index(stocks: list) -> str:
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Top Stocks by Analyst Upside Potential — Full List | StockUpside.io</title>
+  <title>Top Stocks by Analyst Upside Potential - Full List | StockUpside.io</title>
   <meta name="description" content="Complete list of stocks ranked by Wall Street analyst consensus price target upside. Updated daily. Includes analyst count, consensus rating, and price targets."/>
   <meta name="robots" content="index, follow"/>
   <link rel="canonical" href="https://stockupside.io/stocks"/>
