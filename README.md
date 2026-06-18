@@ -88,11 +88,11 @@ MIT — use commercially, modify freely.
 - Added market cap filters
 - Improved SEO
 - Similar stocks in /stocks/TICKER page
-- 
+- Sector specific landing pages
 
 ## TO DO LIST
-- Post on Reddit (User 9:1 rule)
-- Post on Twitter/X (Be active in fintwt)
+- Post more on Reddit (User 9:1 rule)
+- Post more on Twitter/X (Be active in fintwt)
 - Get first paying users
 
 ## TO DO LIST (After $100 - $1k MRR)
@@ -101,17 +101,16 @@ MIT — use commercially, modify freely.
 - CSV/Excel export
 - API access tier: Charge $99/mo to target quant hobbyist and small funds
 - Email alerts
-- Sector-specific landing pages (i.e. /sectors/technology, ...)
 - Sector rotation signals
 - Plain English summaries on the stock pages
 
 ## Growth roadmap
 - $0 MRR | Current; site is not yet deployed
 - $100+ MRR | 4-6 users paying for the monthly subscription
-  Expected: 3-6 months
+  Expected: 1-3 months
 - $1k MRR | 35-60 paying users
-  Expected: ~1 yr
+  Expected: ~0.5-1 yr
 - $10k MRR (Target) | 345-603 paying users -- eqivalent to a high-paying salary
-  Expected: 3-5 years
+  Expected: 1.5-2 years
 - $100k MRR (Reach) | 3449-6030 paying users, unlikely to reach this point
   Expected: never

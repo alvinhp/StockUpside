@@ -279,7 +279,7 @@ function watchlistTable(items) {
         return `<div class="wl-locked-wrap">
       <div class="wl-locked-icon">🔒</div>
       <h2>Watchlists are a Pro feature</h2>
-      <p>Track unlimited stocks across the whole market — upgrade to Pro to
+      <p>Track unlimited stocks across the whole market. Upgrade to Pro to
          build your own watchlist and see it here.</p>
       <button class="btn-pro" id="wl-upgrade-btn">Unlock Pro →</button>
     </div>`;
@@ -411,7 +411,7 @@ function banner() {
     return `<div class="banner">
     <div class="banner-l">🔒 <strong>Viewing 10 of 3,500+ stocks.</strong>
       Upgrade to reveal all analyst picks ranked by upside.</div>
-    <button class="btn-upg" id="btn-banner">Upgrade — $29/mo →</button>
+    <button class="btn-upg" id="btn-banner">Upgrade - $29/mo →</button>
   </div>`;
 }
 function generatingBanner() {
@@ -498,7 +498,7 @@ function controls(sectors, count) {
           ${cons.map(c => `<option value="${c}"${conFilter === c ? " selected" : ""}>${c}</option>`).join("")}
         </select>
       </div>
-      <div class="flt-g"><label class="flt-lbl">MARKET CAP${tier !== "pro" ? ` <span class="flt-lock" title="Free tier default — upgrade to Pro to change">🔒</span>` : ""}</label>
+      <div class="flt-g"><label class="flt-lbl">MARKET CAP${tier !== "pro" ? ` <span class="flt-lock" title="Free tier default. Upgrade to Pro to change">🔒</span>` : ""}</label>
         <select class="flt-sel" id="flt-mcap"${tier !== "pro" ? " disabled" : ""}>
           <option value="0"${minMarketCap === 0 ? " selected" : ""}>Any (Nano+)</option>
           <option value="50000000"${minMarketCap === 50000000 ? " selected" : ""}>Micro+ (&gt;$50M)</option>
@@ -507,7 +507,7 @@ function controls(sectors, count) {
           <option value="10000000000"${minMarketCap === 10000000000 ? " selected" : ""}>Large+ (&gt;$10B)</option>
         </select>
       </div>
-      <div class="flt-g"><label class="flt-lbl">MIN ANALYSTS${tier !== "pro" ? ` <span class="flt-lock" title="Free tier default — upgrade to Pro to change">🔒</span>` : ""}</label>
+      <div class="flt-g"><label class="flt-lbl">MIN ANALYSTS${tier !== "pro" ? ` <span class="flt-lock" title="Free tier default. Upgrade to Pro to change">🔒</span>` : ""}</label>
         <select class="flt-sel" id="flt-analysts"${tier !== "pro" ? " disabled" : ""}>
           <option value="0"${minAnalysts === 0 ? " selected" : ""}>Any</option>
           <option value="2"${minAnalysts === 2 ? " selected" : ""}>2+</option>
