@@ -665,7 +665,7 @@ def generate_stocks(run_date: str) -> list:
     # back off together rather than one thread pausing while others keep
     # hammering. If you see sustained rate-limiting in generate.log, drop
     # MAX_WORKERS to 2 or 1.
-    MAX_WORKERS = 4
+    MAX_WORKERS = 6
 
     print(f"  →  Fetching analyst targets for {len(remaining_tickers)} tickers "
           f"({len(tickers)} total) with {MAX_WORKERS} concurrent workers...")
