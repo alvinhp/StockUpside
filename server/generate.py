@@ -257,9 +257,16 @@ def get_full_universe() -> list:
     JUNK_WORD  = ("SPAC", "FUND", "NOTE")  # require word-boundary match
     try:
         url = "https://www.sec.gov/files/company_tickers.json"
-        req = urllib.request.Request(url, headers={"User-Agent": "stockupside@example.com"})
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        # SEC EDGAR fair-access policy requires a descriptive User-Agent with a
+        # real contact email. Using example.com or a fake address gets 403'd.
+        # Format: "AppName/version contact@yourdomain.com"
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "StockUpside.io/1.0 hello@stockupside.io",
+            "Accept-Encoding": "gzip, deflate",
+        })
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            raw = resp.read()
+            data = json.loads(raw.decode("utf-8"))
 
         tickers = []
         for entry in data.values():
@@ -267,11 +274,6 @@ def get_full_universe() -> list:
             name = entry.get("title",  "").strip().upper()
             if not t or len(t) > 5 or "." in t or "-" in t:
                 continue
-            # Only filter as a warrant/unit suffix when the ticker is
-            # exactly 5 chars (4-letter SPAC base + 1 suffix char). A
-            # 3-letter ticker like HWM or a 4-letter one like LOW/NOW/DLR
-            # is virtually never a warrant and should NOT be dropped just
-            # because it happens to end in W/U/R.
             if len(t) == 5 and any(t.endswith(sfx) for sfx in JUNK_SUFFIXES):
                 continue
             if any(kw in name for kw in JUNK_PLAIN):
@@ -284,8 +286,16 @@ def get_full_universe() -> list:
         print(f"  →  Universe: {len(tickers)} tickers from SEC EDGAR")
         return tickers
 
+    except urllib.error.HTTPError as e:
+        # Surface the actual HTTP status — 403 means User-Agent is wrong or
+        # IP is rate-limited by SEC; 5xx means SEC is having issues.
+        print(f"  ✗  SEC EDGAR HTTP {e.code}: {e.reason}")
+        print(f"  ✗  URL: {url}")
+        print(f"  ✗  Returning empty list — caller will abort rather than")
+        print(f"     overwrite full cache with the 111-ticker fallback.")
+        return []
     except Exception as e:
-        print(f"  ⚠  SEC EDGAR failed: {e} — using fallback list")
+        print(f"  ✗  SEC EDGAR fetch failed: {type(e).__name__}: {e}")
         return []
 
 # ── Momentum helper ────────────────────────────────────────────────────────────
@@ -608,8 +618,18 @@ def generate_stocks(run_date: str) -> list:
     # For development: use get_full_universe()[:500] or UNIVERSE_FALLBACK.
     tickers = get_full_universe()
     if not tickers:
-        print("  ⚠  SEC EDGAR fetch failed — using hardcoded fallback list")
-        tickers = UNIVERSE_FALLBACK
+        # Do NOT fall back to UNIVERSE_FALLBACK here. Running on 111 hardcoded
+        # tickers and calling save_cache() at the end would overwrite a
+        # 3,800+ stock cache with 111 entries — exactly the bug that was
+        # causing the stock count to collapse to 111 after each run when
+        # the SEC EDGAR fetch was failing silently. If the universe fetch
+        # fails, abort and keep the existing cache intact.
+        print("  ✗  SEC EDGAR fetch failed — aborting run to preserve existing cache.")
+        print("  ✗  Check the error above. Common causes:")
+        print("     - SEC rate-limiting your IP (try again in an hour)")
+        print("     - User-Agent not accepted (must include real contact email)")
+        print("     - Network/firewall issue on the server")
+        sys.exit(1)
 
     # ── Uncomment ONE of the lines below to control scope ──
     # tickers = tickers[:2000]
