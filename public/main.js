@@ -210,6 +210,7 @@ async function doFreeSubscribe() {
         });
         const d = await r.json();
         if (d.success) {
+            plausible?.("Free Signup");
             localStorage.setItem("su_free_email", email); // suppress bar on return visits
             const bar = document.getElementById("email-bar");
             if (bar)
@@ -408,7 +409,7 @@ function header() {
 }
 function banner() {
     return `<div class="banner">
-    <div class="banner-l">🔒 <strong>Viewing 10 of 1000+ stocks.</strong>
+    <div class="banner-l">🔒 <strong>Viewing 10 of 3,500+ stocks.</strong>
       Upgrade to reveal all analyst picks ranked by upside.</div>
     <button class="btn-upg" id="btn-banner">Upgrade — $29/mo →</button>
   </div>`;
@@ -890,7 +891,6 @@ function paywallModal() {
             <li>✓ Unlimited watchlist</li>
             <li>✓ Weekly stock digest based on filters</li>
             <li>✓ Priority support</li>
-            <li>✓ CSV export (Coming soon)</li>
             <li>✓ Everything in free tier</li>
           </ul>
           <input type="email" id="pw-email" class="pw-email" placeholder="your@email.com" />
@@ -1157,7 +1157,7 @@ function bindRows() {
             if (!ticker)
                 return; // locked row's star has no ticker
             if (tier !== "pro") {
-                toast("Watchlists are a Pro feature. Upgrade to track your own stocks.", "err");
+                toast("Watchlists are a Pro feature — upgrade to track your own stocks.", "err");
                 showPW();
                 return;
             }
@@ -1179,6 +1179,7 @@ function bindRows() {
     document.querySelectorAll(".tr-locked").forEach(tr => {
         tr.onclick = () => {
             showLockedFeedback(tr);
+            plausible?.("Paywall Opened", { props: { source: "locked_row" } });
             showPW();
         };
         tr.style.cursor = "pointer";
@@ -1216,10 +1217,10 @@ function bindGlobals() {
     // Paywall buttons
     const bPW = document.getElementById("btn-paywall");
     if (bPW)
-        bPW.onclick = showPW;
+        bPW.onclick = () => { plausible?.("Paywall Opened", { props: { source: "header_button" } }); showPW(); };
     const bBn = document.getElementById("btn-banner");
     if (bBn)
-        bBn.onclick = showPW;
+        bBn.onclick = () => { plausible?.("Paywall Opened", { props: { source: "banner" } }); showPW(); };
     const bPWClose = document.getElementById("pw-close");
     if (bPWClose)
         bPWClose.onclick = () => closeModal("pw");
@@ -1247,6 +1248,7 @@ function bindGlobals() {
             }
             subBtn.textContent = "Processing…";
             subBtn.disabled = true;
+            plausible?.("Checkout Started", { props: { plan: "monthly" } });
             await doSubscribe(em, "monthly"); // explicit plan
             // If success, user is redirected; if error, button re-enables above
             subBtn.textContent = "Get Pro Access →";
@@ -1263,6 +1265,7 @@ function bindGlobals() {
             }
             annBtn.textContent = "Processing…";
             annBtn.disabled = true;
+            plausible?.("Checkout Started", { props: { plan: "annual" } });
             await doSubscribe(em, "annual");
             // Note: if it succeeds, user gets redirected to Stripe so we never reach here
             annBtn.textContent = "Get Annual →";

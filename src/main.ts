@@ -4,6 +4,14 @@
 
 const API = "/api";
 
+// ── Analytics ──────────────────────────────────────────────────────────────────
+// window.plausible is injected by the Plausible script tag in index.html.
+// Declared as an ambient global (not a Window interface augmentation,
+// since this file compiles as a plain script, not a module). Calls use
+// ?. so they're no-ops if the script is blocked (ad blockers) or hasn't
+// loaded yet.
+declare const plausible: ((eventName: string, options?: { props?: Record<string, string | number | boolean> }) => void) | undefined;
+
 // ── XSS helper ─────────────────────────────────────────────────────────────────
 // Any user-controlled string (search query, etc.) interpolated into a
 // template that gets assigned via innerHTML must be escaped first —
@@ -207,6 +215,7 @@ async function doFreeSubscribe() {
         });
         const d = await r.json();
         if (d.success) {
+            plausible?.("Free Signup");
             localStorage.setItem("su_free_email", email);  // suppress bar on return visits
             const bar = document.getElementById("email-bar");
             if (bar) bar.innerHTML = `<div class="email-bar-confirm">
@@ -390,7 +399,7 @@ function header() {
 
 function banner() {
   return `<div class="banner">
-    <div class="banner-l">🔒 <strong>Viewing 10 of 1000+ stocks.</strong>
+    <div class="banner-l">🔒 <strong>Viewing 10 of 3,500+ stocks.</strong>
       Upgrade to reveal all analyst picks ranked by upside.</div>
     <button class="btn-upg" id="btn-banner">Upgrade — $29/mo →</button>
   </div>`;
@@ -886,7 +895,6 @@ function paywallModal() {
             <li>✓ Unlimited watchlist</li>
             <li>✓ Weekly stock digest based on filters</li>
             <li>✓ Priority support</li>
-            <li>✓ CSV export (Coming soon)</li>
             <li>✓ Everything in free tier</li>
           </ul>
           <input type="email" id="pw-email" class="pw-email" placeholder="your@email.com" />
@@ -1140,7 +1148,7 @@ function bindRows() {
       const ticker = star.dataset.watchTicker;
       if (!ticker) return; // locked row's star has no ticker
       if (tier !== "pro") {
-        toast("Watchlists are a Pro feature. Upgrade to track your own stocks.", "err");
+        toast("Watchlists are a Pro feature — upgrade to track your own stocks.", "err");
         showPW();
         return;
       }
@@ -1160,6 +1168,7 @@ function bindRows() {
   document.querySelectorAll<HTMLElement>(".tr-locked").forEach(tr => {
     tr.onclick = () => {
       showLockedFeedback(tr);
+      plausible?.("Paywall Opened", { props: { source: "locked_row" } });
       showPW();
     };
     tr.style.cursor = "pointer";
@@ -1193,9 +1202,9 @@ function bindGlobals() {
 
   // Paywall buttons
   const bPW = document.getElementById("btn-paywall");
-  if (bPW) bPW.onclick = showPW;
+  if (bPW) bPW.onclick = () => { plausible?.("Paywall Opened", { props: { source: "header_button" } }); showPW(); };
   const bBn = document.getElementById("btn-banner");
-  if (bBn) bBn.onclick = showPW;
+  if (bBn) bBn.onclick = () => { plausible?.("Paywall Opened", { props: { source: "banner" } }); showPW(); };
   const bPWClose = document.getElementById("pw-close");
   if (bPWClose) bPWClose.onclick = () => closeModal("pw");
   const freeSubBtn = document.getElementById("free-email-btn");
@@ -1216,6 +1225,7 @@ if (subBtn) subBtn.onclick = async () => {
   if (!em||!em.includes("@")) { toast("Enter a valid email","err"); return; }
   subBtn.textContent = "Processing…"; 
   (subBtn as HTMLButtonElement).disabled = true;
+  plausible?.("Checkout Started", { props: { plan: "monthly" } });
   await doSubscribe(em, "monthly");  // explicit plan
   // If success, user is redirected; if error, button re-enables above
   subBtn.textContent = "Get Pro Access →"; 
@@ -1227,6 +1237,7 @@ if (subBtn) subBtn.onclick = async () => {
     if (!em||!em.includes("@")) { toast("Enter your email first","err"); document.getElementById("pw-email")?.focus(); return; }
     annBtn.textContent = "Processing…";
     (annBtn as HTMLButtonElement).disabled = true;
+    plausible?.("Checkout Started", { props: { plan: "annual" } });
     await doSubscribe(em, "annual");
     // Note: if it succeeds, user gets redirected to Stripe so we never reach here
     annBtn.textContent = "Get Annual →";

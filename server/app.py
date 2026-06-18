@@ -1,11 +1,12 @@
 """
-StockUpside.io - Flask Backend
+StockUpside.io — Flask Backend
 Run: python3 server/app.py
 Serves the REST API on :5000 and static files from /public
 """
 
 import json, sqlite3, time, datetime, hashlib, hmac, secrets, os, math, threading, webbrowser, re
 import smtplib, email.mime.multipart, email.mime.text
+from functools import wraps
 from flask import Flask, jsonify, request, send_from_directory, Response, redirect
 from markupsafe import escape
 from flask_limiter import Limiter
@@ -191,6 +192,116 @@ def send_digest_job():
 # ── Stock universe ─────────────────────────────────────────────────────────────
 UNIVERSE = [
     ("NVDA","NVIDIA Corporation","Technology",2.89e12),
+    ("AAPL","Apple Inc.","Technology",3.1e12),
+    ("MSFT","Microsoft Corporation","Technology",3.0e12),
+    ("GOOGL","Alphabet Inc.","Technology",2.1e12),
+    ("AMZN","Amazon.com Inc.","Consumer Cyclical",1.9e12),
+    ("META","Meta Platforms Inc.","Technology",1.4e12),
+    ("TSLA","Tesla Inc.","Consumer Cyclical",1.1e12),
+    ("AVGO","Broadcom Inc.","Technology",780e9),
+    ("ORCL","Oracle Corporation","Technology",420e9),
+    ("CRM","Salesforce Inc.","Technology",310e9),
+    ("AMD","Advanced Micro Devices","Technology",245e9),
+    ("INTC","Intel Corporation","Technology",95e9),
+    ("QCOM","Qualcomm Inc.","Technology",175e9),
+    ("NOW","ServiceNow Inc.","Technology",205e9),
+    ("INTU","Intuit Inc.","Technology",175e9),
+    ("ADBE","Adobe Inc.","Technology",145e9),
+    ("SNOW","Snowflake Inc.","Technology",55e9),
+    ("PLTR","Palantir Technologies","Technology",280e9),
+    ("NET","Cloudflare Inc.","Technology",70e9),
+    ("DDOG","Datadog Inc.","Technology",55e9),
+    ("ZS","Zscaler Inc.","Technology",45e9),
+    ("CRWD","CrowdStrike Holdings","Technology",120e9),
+    ("PANW","Palo Alto Networks","Technology",130e9),
+    ("FTNT","Fortinet Inc.","Technology",65e9),
+    ("MDB","MongoDB Inc.","Technology",20e9),
+    ("UBER","Uber Technologies","Technology",175e9),
+    ("LYFT","Lyft Inc.","Technology",7e9),
+    ("SPOT","Spotify Technology","Technology",88e9),
+    ("RBLX","Roblox Corporation","Technology",30e9),
+    ("U","Unity Software","Technology",10e9),
+    ("JPM","JPMorgan Chase & Co.","Financial Services",680e9),
+    ("BAC","Bank of America Corp.","Financial Services",350e9),
+    ("WFC","Wells Fargo & Co.","Financial Services",215e9),
+    ("GS","Goldman Sachs Group","Financial Services",190e9),
+    ("MS","Morgan Stanley","Financial Services",195e9),
+    ("C","Citigroup Inc.","Financial Services",130e9),
+    ("AXP","American Express Co.","Financial Services",195e9),
+    ("V","Visa Inc.","Financial Services",620e9),
+    ("MA","Mastercard Inc.","Financial Services",495e9),
+    ("PYPL","PayPal Holdings","Financial Services",72e9),
+    ("BRK-B","Berkshire Hathaway","Financial Services",1.0e12),
+    ("BLK","BlackRock Inc.","Financial Services",155e9),
+    ("SCHW","Charles Schwab Corp.","Financial Services",130e9),
+    ("JNJ","Johnson & Johnson","Healthcare",390e9),
+    ("UNH","UnitedHealth Group","Healthcare",430e9),
+    ("LLY","Eli Lilly and Co.","Healthcare",720e9),
+    ("PFE","Pfizer Inc.","Healthcare",155e9),
+    ("ABBV","AbbVie Inc.","Healthcare",325e9),
+    ("MRK","Merck & Co. Inc.","Healthcare",260e9),
+    ("TMO","Thermo Fisher Scientific","Healthcare",195e9),
+    ("DHR","Danaher Corporation","Healthcare",160e9),
+    ("ISRG","Intuitive Surgical","Healthcare",195e9),
+    ("AMGN","Amgen Inc.","Healthcare",155e9),
+    ("GILD","Gilead Sciences","Healthcare",115e9),
+    ("MRNA","Moderna Inc.","Healthcare",14e9),
+    ("REGN","Regeneron Pharmaceuticals","Healthcare",85e9),
+    ("BIIB","Biogen Inc.","Healthcare",25e9),
+    ("VRTX","Vertex Pharmaceuticals","Healthcare",115e9),
+    ("XOM","Exxon Mobil Corp.","Energy",480e9),
+    ("CVX","Chevron Corporation","Energy",275e9),
+    ("COP","ConocoPhillips","Energy",115e9),
+    ("EOG","EOG Resources","Energy",68e9),
+    ("SLB","SLB (Schlumberger)","Energy",60e9),
+    ("MPC","Marathon Petroleum","Energy",58e9),
+    ("OXY","Occidental Petroleum","Energy",46e9),
+    ("WMT","Walmart Inc.","Consumer Defensive",760e9),
+    ("COST","Costco Wholesale","Consumer Defensive",430e9),
+    ("PG","Procter & Gamble","Consumer Defensive",365e9),
+    ("KO","Coca-Cola Co.","Consumer Defensive",290e9),
+    ("PEP","PepsiCo Inc.","Consumer Defensive",200e9),
+    ("MCD","McDonald's Corporation","Consumer Cyclical",200e9),
+    ("SBUX","Starbucks Corporation","Consumer Cyclical",82e9),
+    ("NKE","Nike Inc.","Consumer Cyclical",95e9),
+    ("TGT","Target Corporation","Consumer Defensive",56e9),
+    ("HD","Home Depot Inc.","Consumer Cyclical",385e9),
+    ("LOW","Lowe's Companies","Consumer Cyclical",155e9),
+    ("GM","General Motors Co.","Consumer Cyclical",48e9),
+    ("F","Ford Motor Company","Consumer Cyclical",43e9),
+    ("RIVN","Rivian Automotive","Consumer Cyclical",14e9),
+    ("LUV","Southwest Airlines","Industrials",17e9),
+    ("DAL","Delta Air Lines","Industrials",25e9),
+    ("UAL","United Airlines","Industrials",20e9),
+    ("BA","Boeing Company","Industrials",130e9),
+    ("GE","GE Aerospace","Industrials",250e9),
+    ("CAT","Caterpillar Inc.","Industrials",165e9),
+    ("DE","Deere & Company","Industrials",110e9),
+    ("HON","Honeywell International","Industrials",140e9),
+    ("RTX","RTX Corporation","Industrials",175e9),
+    ("LMT","Lockheed Martin","Industrials",115e9),
+    ("NOC","Northrop Grumman","Industrials",65e9),
+    ("UPS","United Parcel Service","Industrials",95e9),
+    ("FDX","FedEx Corporation","Industrials",57e9),
+    ("NFLX","Netflix Inc.","Communication Services",500e9),
+    ("DIS","Walt Disney Company","Communication Services",205e9),
+    ("CMCSA","Comcast Corporation","Communication Services",150e9),
+    ("T","AT&T Inc.","Communication Services",165e9),
+    ("VZ","Verizon Communications","Communication Services",170e9),
+    ("TMUS","T-Mobile US Inc.","Communication Services",275e9),
+    ("ABNB","Airbnb Inc.","Consumer Cyclical",88e9),
+    ("BKNG","Booking Holdings","Consumer Cyclical",165e9),
+    ("NEE","NextEra Energy","Utilities",145e9),
+    ("DUK","Duke Energy Corp.","Utilities",88e9),
+    ("SO","Southern Company","Utilities",88e9),
+    ("AMT","American Tower Corp.","Real Estate",95e9),
+    ("PLD","Prologis Inc.","Real Estate",115e9),
+    ("EQIX","Equinix Inc.","Real Estate",85e9),
+    ("SPG","Simon Property Group","Real Estate",55e9),
+    ("NEM","Newmont Corporation","Basic Materials",52e9),
+    ("FCX","Freeport-McMoRan Inc.","Basic Materials",68e9),
+    ("APD","Air Products & Chemicals","Basic Materials",58e9),
+    ("SHW","Sherwin-Williams Co.","Basic Materials",90e9),
 ]
 
 import time
@@ -528,6 +639,33 @@ def init_db():
         prior_rating TEXT,
         UNIQUE(date, ticker, analyst_firm)
 )""")
+
+    # ── API tier ──────────────────────────────────────────────────────────
+    # Separate from the web `sessions` table on purpose: API keys are
+    # long-lived (no expiry by default, since rotating them breaks
+    # integrations), revocable independently of web login, and need their
+    # own per-key usage tracking for rate limiting + the future usage
+    # dashboard. One email can hold multiple keys (e.g. dev + prod).
+    con.execute("""CREATE TABLE IF NOT EXISTS api_keys(
+        api_key TEXT PRIMARY KEY,
+        email TEXT NOT NULL,
+        stripe_id TEXT,
+        plan TEXT DEFAULT 'active',   -- 'active' | 'revoked'
+        created_at INTEGER NOT NULL,
+        last_used_at INTEGER,
+        label TEXT)""")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_api_keys_email ON api_keys(email)")
+
+    # Per-day request counts, keyed by (api_key, date). Used both for
+    # rate limiting (read here instead of trusting flask-limiter's
+    # in-memory store, which resets on restart and doesn't share state
+    # across multiple server processes) and for an eventual "usage this
+    # month" display for API customers.
+    con.execute("""CREATE TABLE IF NOT EXISTS api_usage(
+        api_key TEXT NOT NULL,
+        date TEXT NOT NULL,
+        request_count INTEGER DEFAULT 0,
+        PRIMARY KEY (api_key, date))""")
 
     con.commit()
     con.close()
@@ -1536,7 +1674,103 @@ def downgrade_subscriber(email_addr: str) -> bool:
     con.commit()
     con.close()
     revoke_all_sessions(email_addr)
+    revoke_all_api_keys(email_addr)
     return cur.rowcount > 0
+
+
+# ── API tier: key management ───────────────────────────────────────────────
+# Keys are prefixed (su_live_...) so they're recognizable in logs, support
+# tickets, and accidental commits — a bare random token gives no hint about
+# what it is or where it leaked from. No expiry by default (unlike web
+# sessions): API integrations break silently if a key rotates out from
+# under them, so revocation is explicit (cancel subscription, or a future
+# "regenerate key" action) rather than time-based.
+API_KEY_PREFIX = "su_live_"
+
+def create_api_key(email_addr: str, stripe_id: str | None = None, label: str | None = None) -> str:
+    """Issue a new API key for an email. Does not check for existing keys —
+    callers should decide whether to allow multiple keys per email."""
+    api_key = API_KEY_PREFIX + secrets.token_urlsafe(32)
+    now = int(time.time())
+    con = get_db()
+    con.execute(
+        "INSERT INTO api_keys (api_key, email, stripe_id, plan, created_at, label) "
+        "VALUES (?, ?, ?, 'active', ?, ?)",
+        (api_key, email_addr, stripe_id, now, label),
+    )
+    con.commit()
+    con.close()
+    return api_key
+
+def resolve_api_key(api_key: str) -> str | None:
+    """Resolve an API key to its owning email. Returns None if the key
+    doesn't exist or has been revoked. Updates last_used_at on success."""
+    if not api_key:
+        return None
+    con = get_db()
+    row = con.execute(
+        "SELECT email, plan FROM api_keys WHERE api_key=?", (api_key,)
+    ).fetchone()
+    if not row or row[1] != "active":
+        con.close()
+        return None
+    email_addr = row[0]
+    con.execute(
+        "UPDATE api_keys SET last_used_at=? WHERE api_key=?",
+        (int(time.time()), api_key),
+    )
+    con.commit()
+    con.close()
+    return email_addr
+
+def revoke_api_key(api_key: str) -> bool:
+    """Mark a key as revoked rather than deleting it, so api_usage history
+    (and any future billing-by-usage reporting) stays intact."""
+    con = get_db()
+    cur = con.execute(
+        "UPDATE api_keys SET plan='revoked' WHERE api_key=?", (api_key,)
+    )
+    con.commit()
+    con.close()
+    return cur.rowcount > 0
+
+def revoke_all_api_keys(email_addr: str) -> int:
+    """Revoke every API key for an email — called when the underlying
+    Stripe subscription is cancelled, mirroring revoke_all_sessions."""
+    con = get_db()
+    cur = con.execute(
+        "UPDATE api_keys SET plan='revoked' WHERE email=?", (email_addr,)
+    )
+    con.commit()
+    con.close()
+    return cur.rowcount
+
+# Daily request cap enforced server-side, independent of (and in addition
+# to) the per-IP flask-limiter rate limit below. This is the number that
+# actually matters for the $99/mo tier's fair-use policy, and unlike
+# flask-limiter's in-memory store, it survives server restarts and is
+# correct even if you later run multiple worker processes.
+API_DAILY_REQUEST_LIMIT = 10_000
+
+def check_and_record_api_usage(api_key: str) -> tuple[bool, int]:
+    """Increment today's request count for this key and return
+    (allowed, count_after_increment). Allowed is False once the key has
+    hit API_DAILY_REQUEST_LIMIT for the day — callers should return 429."""
+    today = datetime.date.today().isoformat()
+    con = get_db()
+    con.execute(
+        "INSERT INTO api_usage (api_key, date, request_count) VALUES (?, ?, 1) "
+        "ON CONFLICT(api_key, date) DO UPDATE SET request_count = request_count + 1",
+        (api_key, today),
+    )
+    row = con.execute(
+        "SELECT request_count FROM api_usage WHERE api_key=? AND date=?",
+        (api_key, today),
+    ).fetchone()
+    con.commit()
+    con.close()
+    count = row[0] if row else 1
+    return (count <= API_DAILY_REQUEST_LIMIT, count)
 
 
 def _admin_authorized() -> bool:
@@ -1806,6 +2040,149 @@ def api_stats():
         "generating":       is_generating(),
     })
 
+
+# ── API v1 — programmatic access tier ($99/mo) ────────────────────────────
+# Separate namespace (/api/v1/...) from the existing /api/* routes, which
+# are the SPA's own internal endpoints (session-token auth, free/pro
+# tiering baked in, shapes tuned for the frontend). v1 is a distinct
+# contract aimed at external consumers: API-key auth, stable field names,
+# and no silent shape changes without bumping to v2.
+
+def _extract_api_key() -> str:
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        return auth.removeprefix("Bearer ").strip()
+    # Also accept ?api_key=... for convenience (e.g. quick browser testing),
+    # though the header form is what we document and recommend — query
+    # params end up in server logs and browser history.
+    return request.args.get("api_key", "").strip()
+
+def require_api_key(view_func):
+    """Decorator: resolves the API key, enforces the daily usage cap, and
+    records the request — or returns the appropriate 401/429 JSON error.
+    Wraps the view rather than duplicating this in every v1 route."""
+    @wraps(view_func)
+    def wrapped(*args, **kwargs):
+        api_key = _extract_api_key()
+        if not api_key:
+            return jsonify({
+                "error": "Missing API key. Pass it as 'Authorization: Bearer YOUR_KEY'.",
+                "docs": "https://stockupside.io/api/docs",
+            }), 401
+
+        email_addr = resolve_api_key(api_key)
+        if not email_addr:
+            return jsonify({
+                "error": "Invalid or revoked API key.",
+                "docs": "https://stockupside.io/api/docs",
+            }), 401
+
+        allowed, count_today = check_and_record_api_usage(api_key)
+        if not allowed:
+            return jsonify({
+                "error": f"Daily request limit of {API_DAILY_REQUEST_LIMIT} exceeded.",
+                "requests_today": count_today,
+                "limit": API_DAILY_REQUEST_LIMIT,
+                "resets": "midnight UTC",
+            }), 429
+
+        return view_func(*args, **kwargs)
+    return wrapped
+
+# Per-key rate limiting (bursty protection, independent of the daily cap
+# above which guards total volume). Keyed on the API key itself rather
+# than IP, since legitimate API customers may call from a shared
+# server/cloud IP with many other unrelated tenants behind it.
+def _api_key_for_limiter() -> str:
+    return _extract_api_key() or get_remote_address()
+
+@app.route("/api/v1/stocks")
+@limiter.limit("120 per minute", key_func=_api_key_for_limiter)
+@require_api_key
+def api_v1_stocks():
+    """List stocks ranked by analyst consensus upside. No free/pro tiering
+    here — the API tier itself is the paywall, so an authenticated request
+    always gets the full dataset, just paginated.
+
+    Query params:
+      limit   — max rows to return (default 100, max 500)
+      offset  — pagination offset (default 0)
+      sector  — exact sector match, e.g. "Technology"
+      min_analysts — minimum analyst_count
+    """
+    stocks = get_stocks_cached()
+    if not stocks:
+        return jsonify({"error": "Data is being generated, check back shortly.", "stocks": []}), 503
+
+    sector = request.args.get("sector", "").strip()
+    if sector:
+        stocks = [s for s in stocks if s.get("sector", "").lower() == sector.lower()]
+
+    try:
+        min_analysts = int(request.args.get("min_analysts", 0))
+    except ValueError:
+        min_analysts = 0
+    if min_analysts > 0:
+        stocks = [s for s in stocks if (s.get("analyst_count") or 0) >= min_analysts]
+
+    try:
+        limit = max(1, min(500, int(request.args.get("limit", 100))))
+    except ValueError:
+        limit = 100
+    try:
+        offset = max(0, int(request.args.get("offset", 0)))
+    except ValueError:
+        offset = 0
+
+    page = stocks[offset:offset + limit]
+    return jsonify({
+        "stocks": page,
+        "count": len(page),
+        "total_matching": len(stocks),
+        "limit": limit,
+        "offset": offset,
+        "last_updated": stocks[0].get("last_updated") if stocks else None,
+    })
+
+@app.route("/api/v1/stocks/<ticker>")
+@limiter.limit("120 per minute", key_func=_api_key_for_limiter)
+@require_api_key
+def api_v1_stock_detail(ticker):
+    """Full data for a single ticker, including the same similar-stocks
+    list shown on the public /stocks/<ticker> page."""
+    ticker = ticker.upper()
+    stocks = get_stocks_cached()
+    stock  = next((s for s in stocks if s["ticker"] == ticker), None)
+    if not stock:
+        return jsonify({"error": f"Ticker '{ticker}' not found in tracked universe."}), 404
+
+    similar = similar_stocks(stock, stocks)
+    return jsonify({
+        "stock": stock,
+        "similar_stocks": similar,
+    })
+
+@app.route("/api/v1/usage")
+@limiter.limit("30 per minute", key_func=_api_key_for_limiter)
+@require_api_key
+def api_v1_usage():
+    """Self-service usage check, so customers can see how close they are
+    to the daily cap without emailing support."""
+    api_key = _extract_api_key()
+    today = datetime.date.today().isoformat()
+    con = get_db()
+    row = con.execute(
+        "SELECT request_count FROM api_usage WHERE api_key=? AND date=?",
+        (api_key, today),
+    ).fetchone()
+    con.close()
+    return jsonify({
+        "requests_today": row[0] if row else 0,
+        "daily_limit": API_DAILY_REQUEST_LIMIT,
+        "date": today,
+    })
+
+
 import stripe
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY", "")
 
@@ -1842,6 +2219,214 @@ def api_subscribe():
         print(f"  ⚠  Stripe error: {e}")
         return jsonify({"error": str(e)}), 500
 
+def _track_server_event(event_name: str, props: dict | None = None):
+    """Fire a custom event to Plausible's events API from the server.
+    Used for events that happen across a redirect (Stripe checkout
+    completion), where client-side JS can't confirm the outcome. Best
+    effort — failures here never block the actual request."""
+    domain = os.environ.get("PLAUSIBLE_DOMAIN", "stockupside.io")
+    payload = json.dumps({
+        "domain": domain, "name": event_name,
+        "url": f"https://{domain}/", "props": props or {},
+    }).encode("utf-8")
+    try:
+        req = urllib.request.Request(
+            "https://plausible.io/api/event", data=payload,
+            headers={"Content-Type": "application/json", "User-Agent": "stockupside-server/1.0"},
+        )
+        urllib.request.urlopen(req, timeout=3)
+    except Exception as e:
+        print(f"  ⚠  Plausible server event '{event_name}' failed (non-fatal): {e}")
+
+@app.route("/api/docs")
+def api_docs_page():
+    """Public, indexable API documentation. No auth required to view —
+    the docs page itself is a top-of-funnel SEO asset (per the marketing
+    plan), separate from the actual v1 endpoints which do require a key."""
+    return Response(_render_api_docs_page(), mimetype="text/html")
+
+def _render_api_docs_page() -> str:
+    return """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>API Documentation | StockUpside.io</title>
+  <meta name="description" content="Programmatic access to analyst consensus upside data — ranked stocks, price targets, and analyst counts via a simple REST API. $99/mo."/>
+  <meta property="og:title"       content="API Documentation | StockUpside.io"/>
+  <meta property="og:description" content="Pull analyst consensus upside data programmatically. REST API, JSON responses, $99/mo flat."/>
+  <meta property="og:url"         content="https://stockupside.io/api/docs"/>
+  <meta property="og:image"       content="https://stockupside.io/og-image.png"/>
+  <meta name="twitter:card"       content="summary_large_image"/>
+  <link rel="stylesheet" href="/style.css"/>
+  <style>
+    .docs-wrap { max-width:920px; margin:0 auto; padding:32px 20px 80px; }
+    .docs-wrap h1 { font-family:var(--font-mono); font-size:22px; margin-bottom:6px; }
+    .docs-sub { color:var(--text2); font-size:13px; margin-bottom:32px; line-height:1.6; }
+    .docs-wrap h2 { font-family:var(--font-mono); font-size:16px; margin:40px 0 14px;
+                    padding-top:24px; border-top:1px solid var(--border); }
+    .docs-wrap h2:first-of-type { border-top:none; padding-top:0; }
+    .docs-wrap p { color:var(--text2); font-size:13px; line-height:1.7; margin-bottom:14px; }
+    .docs-wrap code { font-family:var(--font-mono); font-size:12px; background:var(--bg2);
+                       padding:2px 6px; border-radius:4px; color:var(--text); }
+    pre { background:var(--bg2); border:1px solid var(--border); border-radius:8px;
+          padding:16px 18px; overflow-x:auto; font-family:var(--font-mono); font-size:12px;
+          line-height:1.6; margin:16px 0; }
+    pre code { background:none; padding:0; }
+    table { width:100%; border-collapse:collapse; margin:16px 0; font-size:12.5px; }
+    th { text-align:left; color:var(--text3); font-family:var(--font-mono); font-size:10px;
+         letter-spacing:.08em; padding:8px 12px; border-bottom:1px solid var(--border); }
+    td { padding:8px 12px; border-bottom:1px solid var(--border); color:var(--text2); }
+    td code { font-size:11px; }
+    .docs-cta { background:var(--bg2); border:1px solid var(--border); border-radius:8px;
+                padding:24px; margin:32px 0; text-align:center; }
+    .docs-cta-price { font-family:var(--font-mono); font-size:28px; font-weight:700; margin-bottom:6px; }
+    .docs-cta-sub { color:var(--text2); font-size:13px; margin-bottom:16px; }
+    .docs-cta input { width:280px; max-width:100%; padding:10px 14px; border-radius:6px;
+                       border:1px solid var(--border); background:var(--bg); color:var(--text);
+                       font-size:13px; margin-right:8px; }
+    .docs-cta button { padding:10px 20px; border-radius:var(--radius); border:none; background:var(--accent);
+                        color:#000; font-weight:700; font-family:var(--font-mono); font-size:12px;
+                        letter-spacing:.06em; cursor:pointer; transition:background .2s; }
+    .docs-cta button:hover { background:var(--accent2); }
+    .docs-toc { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:32px; }
+    .docs-toc a { font-family:var(--font-mono); font-size:11px; color:var(--text2);
+                  border:1px solid var(--border); border-radius:6px; padding:6px 12px;
+                  text-decoration:none; }
+    .docs-toc a:hover { color:var(--text); border-color:var(--text2); }
+  </style>
+</head>
+<body>
+  <div class="docs-wrap">
+    <h1>▲ StockUpside API</h1>
+    <div class="docs-sub">
+      Programmatic access to the same analyst consensus upside data that powers the site —
+      ranked stocks, price targets, analyst counts, and sector breakdowns. JSON over REST,
+      no SDK required.
+    </div>
+
+    <div class="docs-toc">
+      <a href="#auth">Authentication</a>
+      <a href="#stocks">GET /stocks</a>
+      <a href="#detail">GET /stocks/:ticker</a>
+      <a href="#usage">GET /usage</a>
+      <a href="#limits">Rate limits</a>
+      <a href="#pricing">Pricing</a>
+    </div>
+
+    <h2 id="auth">Authentication</h2>
+    <p>
+      Every request needs your API key in the <code>Authorization</code> header as a Bearer
+      token. Keys look like <code>su_live_...</code> and are issued once, immediately after
+      checkout — there's no separate "generate key" step.
+    </p>
+    <pre><code>curl -H "Authorization: Bearer su_live_YOUR_KEY" \\
+  https://stockupside.io/api/v1/stocks</code></pre>
+    <p>
+      Lost your key? Email <a href="mailto:hello@stockupside.io">hello@stockupside.io</a> from
+      the address you subscribed with and we'll revoke the old one and issue a new one.
+    </p>
+
+    <h2 id="stocks">GET /api/v1/stocks</h2>
+    <p>
+      Returns stocks ranked by analyst consensus upside. Unlike the free/Pro web tiers, an
+      authenticated API request always gets the full dataset — the API subscription itself is
+      the gate, so there's no separate top-10 limit to work around.
+    </p>
+    <table>
+      <thead><tr><th>Param</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+      <tbody>
+        <tr><td><code>limit</code></td><td>int</td><td>100</td><td>Max rows to return (max 500)</td></tr>
+        <tr><td><code>offset</code></td><td>int</td><td>0</td><td>Pagination offset</td></tr>
+        <tr><td><code>sector</code></td><td>string</td><td>—</td><td>Exact sector match, e.g. <code>Technology</code></td></tr>
+        <tr><td><code>min_analysts</code></td><td>int</td><td>0</td><td>Minimum analyst coverage count</td></tr>
+      </tbody>
+    </table>
+    <pre><code>curl -H "Authorization: Bearer su_live_YOUR_KEY" \\
+  "https://stockupside.io/api/v1/stocks?sector=Technology&limit=20"</code></pre>
+    <pre><code>{
+  "stocks": [
+    {
+      "ticker": "EXAMPLE",
+      "name": "Example Corp",
+      "sector": "Technology",
+      "current_price": 100.0,
+      "target_price": 130.0,
+      "upside_pct": 30.0,
+      "analyst_count": 12,
+      "consensus": "Buy",
+      "market_cap_raw": 50000000000,
+      "pe_ratio": 22.0,
+      "peg_ratio": 1.2,
+      ...
+    }
+  ],
+  "count": 20,
+  "total_matching": 142,
+  "limit": 20,
+  "offset": 0,
+  "last_updated": "2026-06-18"
+}</code></pre>
+
+    <h2 id="detail">GET /api/v1/stocks/:ticker</h2>
+    <p>
+      Full data for a single ticker, including the same similar-stocks list shown on the
+      public stock detail pages.
+    </p>
+    <pre><code>curl -H "Authorization: Bearer su_live_YOUR_KEY" \\
+  https://stockupside.io/api/v1/stocks/DOCN</code></pre>
+    <p>Returns <code>404</code> with a JSON error if the ticker isn't in the tracked universe.</p>
+
+    <h2 id="usage">GET /api/v1/usage</h2>
+    <p>Check how many requests you've made today against your daily limit, without digging through logs.</p>
+    <pre><code>curl -H "Authorization: Bearer su_live_YOUR_KEY" \\
+  https://stockupside.io/api/v1/usage</code></pre>
+    <pre><code>{ "requests_today": 412, "daily_limit": 10000, "date": "2026-06-18" }</code></pre>
+
+    <h2 id="limits">Rate Limits</h2>
+    <p>
+      Two limits apply, both keyed to your API key rather than your IP (so it's fine to call
+      from a shared server or cloud function): a burst limit of <strong>120 requests/minute</strong>,
+      and a fair-use cap of <strong>10,000 requests/day</strong>, resetting at midnight UTC.
+      Exceeding either returns <code>429</code> with a JSON body explaining which limit was hit.
+    </p>
+
+    <h2 id="pricing">Pricing</h2>
+    <div class="docs-cta">
+      <div class="docs-cta-price">$99<span style="font-size:14px;color:var(--text2)">/mo</span></div>
+      <div class="docs-cta-sub">Full dataset, no row limits, 10,000 requests/day</div>
+      <input type="email" id="api-docs-email" placeholder="your@email.com" />
+      <button id="api-docs-subscribe">Get API Access →</button>
+    </div>
+    <p>
+      Built for quant hobbyists, small funds, and anyone building a tool on top of analyst
+      consensus data who'd rather not scrape it by hand. Cancel anytime — your key stops working
+      immediately on cancellation, no partial-month proration headaches on our end to worry about.
+    </p>
+  </div>
+  <script>
+    document.getElementById('api-docs-subscribe').onclick = async function() {
+      var btn = this;
+      var email = document.getElementById('api-docs-email').value.trim();
+      if (!email || !email.includes('@')) { alert('Enter a valid email'); return; }
+      btn.textContent = 'Redirecting…'; btn.disabled = true;
+      try {
+        var r = await fetch('/api/api-tier/subscribe', {
+          method: 'POST', headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({email: email})
+        });
+        var d = await r.json();
+        if (d.checkout_url) { window.location.href = d.checkout_url; }
+        else { alert(d.error || 'Something went wrong'); btn.textContent = 'Get API Access →'; btn.disabled = false; }
+      } catch (e) {
+        alert('Could not connect'); btn.textContent = 'Get API Access →'; btn.disabled = false;
+      }
+    };
+  </script>
+</body>
+</html>"""
+
+
 @app.route("/success")
 def success_page():
     session_id = request.args.get("session_id", "")
@@ -1849,7 +2434,7 @@ def success_page():
         return redirect("/")
 
     try:
-        session    = stripe.checkout.Session.retrieve(session_id)
+        session    = stripe.checkout.Session.retrieve(session_id, expand=["line_items"])
         email      = session.customer_details.email.strip().lower()
         stripe_id  = session.customer
 
@@ -1861,6 +2446,14 @@ def success_page():
         con.commit()
         con.close()
 
+        annual_price_id = os.environ.get("STRIPE_PRICE_ANNUAL", "")
+        try:
+            price_id_used = session.line_items.data[0].price.id
+        except Exception:
+            price_id_used = ""
+        plan_label = "annual" if price_id_used == annual_price_id else "monthly"
+        _track_server_event("Checkout Completed", {"plan": plan_label})
+
         # Issue a fresh random session token (replaces the old deterministic,
         # permanent, shareable token scheme).
         token = create_session(email)
@@ -1871,6 +2464,100 @@ def success_page():
     except Exception as e:
         print(f"  ⚠  Success page error: {e}")
         return redirect("/")
+
+
+# ── API tier ─────────────────────────────────────────────────────────────────
+@app.route("/api/api-tier/subscribe", methods=["POST", "OPTIONS"])
+@limiter.limit("10 per hour")
+def api_tier_subscribe():
+    """Start a Stripe Checkout session for the $99/mo API tier. Kept as a
+    separate flow from /api/subscribe (the $29/$199 Pro web tier) since
+    they're different products with different price IDs and different
+    post-checkout behavior (issuing an API key vs. a web session token)."""
+    if request.method == "OPTIONS":
+        return Response(status=200)
+    body  = request.get_json(force=True) or {}
+    email = body.get("email", "").strip().lower()
+
+    if not email or "@" not in email:
+        return jsonify({"error": "Invalid email"}), 400
+
+    price_id = os.environ.get("STRIPE_PRICE_API_TIER")
+    if not price_id:
+        return jsonify({"error": "API tier is not configured yet"}), 503
+
+    try:
+        session = stripe.checkout.Session.create(
+            payment_method_types=["card"],
+            line_items=[{"price": price_id, "quantity": 1}],
+            mode="subscription",
+            customer_email=email,
+            success_url="https://stockupside.io/api-success?session_id={CHECKOUT_SESSION_ID}",
+            cancel_url="https://stockupside.io/api/docs",
+        )
+        return jsonify({"checkout_url": session.url})
+    except Exception as e:
+        print(f"  ⚠  Stripe error (API tier): {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api-success")
+def api_tier_success_page():
+    """Post-checkout landing for the API tier. Unlike /success (which
+    issues a short-lived web session token), this issues a long-lived
+    API key and shows it exactly once — Stripe/our DB never displays the
+    full key again after this page, matching how most API products
+    (Stripe itself included) handle key reveal."""
+    session_id = request.args.get("session_id", "")
+    if not session_id:
+        return redirect("/api/docs")
+
+    try:
+        session   = stripe.checkout.Session.retrieve(session_id)
+        email     = session.customer_details.email.strip().lower()
+        stripe_id = session.customer
+
+        api_key = create_api_key(email, stripe_id=stripe_id, label="default")
+        _track_server_event("API Tier Checkout Completed")
+
+        return Response(_render_api_key_reveal_page(api_key, email), mimetype="text/html")
+
+    except Exception as e:
+        print(f"  ⚠  API tier success page error: {e}")
+        return redirect("/api/docs")
+
+def _render_api_key_reveal_page(api_key: str, email: str) -> str:
+    """One-time key reveal page. Plain server-rendered HTML (no main.js
+    dependency) so it works even if something's wrong with the SPA bundle
+    — this page only needs to ever do one thing correctly."""
+    safe_email = escape(email)
+    safe_key   = escape(api_key)
+    return f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<title>Your StockUpside API Key</title>
+<meta name="robots" content="noindex">
+<style>
+  body {{ background:#0d1117; color:#c9d1d9; font-family:-apple-system,sans-serif;
+         max-width:640px; margin:60px auto; padding:0 24px; line-height:1.6; }}
+  .key-box {{ background:#161b22; border:1px solid #30363d; border-radius:8px;
+              padding:20px; font-family:monospace; font-size:15px; word-break:break-all;
+              margin:20px 0; user-select:all; }}
+  .warn {{ color:#e3b341; font-size:14px; }}
+  a {{ color:#58a6ff; }}
+  code {{ background:#161b22; padding:2px 6px; border-radius:4px; }}
+</style></head>
+<body>
+  <h1>▲ Your API Key</h1>
+  <p>Subscribed as <strong>{safe_email}</strong>. Save this key now — for security, we only
+  show it once and can't display it again later.</p>
+  <div class="key-box">{safe_key}</div>
+  <p class="warn">⚠ Copy this somewhere safe before leaving this page.</p>
+  <h3>Quick start</h3>
+  <pre><code>curl -H "Authorization: Bearer {safe_key}" \\
+  https://stockupside.io/api/v1/stocks?limit=10</code></pre>
+  <p>Full documentation: <a href="/api/docs">stockupside.io/api/docs</a></p>
+  <p>Lost a key later? Email <a href="mailto:hello@stockupside.io">hello@stockupside.io</a> from
+  the address you subscribed with and we'll revoke and reissue one.</p>
+</body></html>"""
 
 @app.route("/api/stripe-webhook", methods=["POST"])
 @limiter.exempt
@@ -1925,10 +2612,26 @@ def stripe_webhook():
             email_addr = row[0]
             downgrade_subscriber(email_addr)
             print(f"  ✓  Subscription cancelled for {email_addr} — "
-                  f"downgraded to free, sessions revoked.")
+                  f"downgraded to free, sessions and API keys revoked.")
         else:
-            print(f"  ⚠  Webhook: customer.subscription.deleted for unknown "
-                  f"stripe_id={customer_id}")
+            # Not a Pro web subscriber — check whether this customer_id
+            # belongs to an API tier subscription instead. These are
+            # billed as separate Stripe subscriptions/customers from the
+            # Pro web tier, so they won't show up in `subscribers` at all.
+            con = get_db()
+            api_row = con.execute(
+                "SELECT email FROM api_keys WHERE stripe_id=? AND plan='active'",
+                (customer_id,),
+            ).fetchone()
+            con.close()
+            if api_row:
+                api_email = api_row[0]
+                revoke_all_api_keys(api_email)
+                print(f"  ✓  API tier subscription cancelled for {api_email} — "
+                      f"API key(s) revoked.")
+            else:
+                print(f"  ⚠  Webhook: customer.subscription.deleted for unknown "
+                      f"stripe_id={customer_id}")
 
     # Acknowledge all other event types without action (Stripe retries on
     # non-2xx, so we always return 200 for events we don't care about).
@@ -4207,15 +4910,15 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>{s["ticker"]} Analyst Price Target - {s["name"]} Stock Forecast | StockUpside.io</title>
+  <title>{s["ticker"]} Analyst Price Target — {s["name"]} Stock Forecast | StockUpside.io</title>
   <meta name="description" content="Wall Street analysts have a consensus price target of ${s["target_price"]} for {s["name"]} ({s["ticker"]}), {f'implying {s["upside_pct"]}% upside' if s["upside_pct"] >= 0 else f'which is {abs(s["upside_pct"])}% below'} the current price of ${s["current_price"]}. {s["analyst_count"]} analysts covered. Consensus: {s["consensus"]}. {s["sector"]} sector."/>
   <meta property="og:type"        content="article"/>
-  <meta property="og:title"       content="{s["ticker"]} - {s["upside_pct"]}% Analyst Upside | StockUpside.io"/>
+  <meta property="og:title"       content="{s["ticker"]} — {s["upside_pct"]}% Analyst Upside | StockUpside.io"/>
   <meta property="og:description" content="{s["analyst_count"]} analysts. Target: ${s["target_price"]}. Current: ${s["current_price"]}. Consensus: {s["consensus"]}."/>
   <meta property="og:url"         content="https://stockupside.io/stocks/{s["ticker"]}"/>
   <meta property="og:image"       content="https://stockupside.io/og-image.png"/>
   <meta name="twitter:card"       content="summary_large_image"/>
-  <meta name="twitter:title"      content="{s["ticker"]} - {s["upside_pct"]}% Analyst Upside | StockUpside.io"/>
+  <meta name="twitter:title"      content="{s["ticker"]} — {s["upside_pct"]}% Analyst Upside | StockUpside.io"/>
   <meta name="twitter:description" content="{s["analyst_count"]} analysts covering {s["ticker"]}. Consensus: {s["consensus"]}. Target: ${s["target_price"]}."/>
   <meta name="twitter:image"      content="https://stockupside.io/og-image.png"/>
   <meta name="robots" content="index, follow"/>
@@ -4371,7 +5074,7 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
     </div>
 
     <div class="sp-card">
-      <div class="sp-card-title">ANALYST CONSENSUS - {s["consensus"].upper()}</div>
+      <div class="sp-card-title">ANALYST CONSENSUS — {s["consensus"].upper()}</div>
       <div class="rbar-wrap">
         <div class="rbar-row">
           <span class="rbar-lbl" style="color:#00e676">Strong Buy</span>
@@ -4524,7 +5227,7 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
       <strong>${s["target_price"]}</strong>, {"implying potential upside of <strong>" + str(s["upside_pct"]) + "%</strong>" if s["upside_pct"] >= 0 else "which is <strong>" + str(abs(s["upside_pct"])) + "%</strong> below the current price"}
       over the next 12 months.
       {s["analyst_count"]} analysts currently cover {s["ticker"]}, with a consensus rating of
-      <strong>{s["consensus"]}</strong> - {bull_pct}% of analysts rate the stock a Buy or Strong Buy.
+      <strong>{s["consensus"]}</strong> — {bull_pct}% of analysts rate the stock a Buy or Strong Buy.
       The most bullish analyst has a price target of <strong>${s["high_target"]}</strong>,
       while the most cautious has a target of <strong>${s["low_target"]}</strong>.
     </p>
@@ -4632,7 +5335,7 @@ def render_stocks_index(stocks: list) -> str:
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Top Stocks by Analyst Upside Potential - Full List | StockUpside.io</title>
+  <title>Top Stocks by Analyst Upside Potential — Full List | StockUpside.io</title>
   <meta name="description" content="Complete list of stocks ranked by Wall Street analyst consensus price target upside. Updated daily. Includes analyst count, consensus rating, and price targets."/>
   <meta name="robots" content="index, follow"/>
   <link rel="canonical" href="https://stockupside.io/stocks"/>

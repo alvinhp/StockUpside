@@ -11,6 +11,9 @@
   <meta property="og:description" content="Discover the top stocks ranked by analyst consensus price target upside. Updated daily. Free." />
   <meta property="og:url"         content="https://stockupside.io/" />
   <meta property="og:image"       content="https://stockupside.io/og-image.png" />
+  <!-- Note: Make sure og-image.png exists in public/ folder, 1200×630px. Test at https://cards-dev.twitter.com/validator -->
+  <meta property="og:image:width"  content="1200" />
+  <meta property="og:image:height" content="630" />
   <!-- Twitter Card -->
   <meta name="twitter:card"        content="summary_large_image" />
   <meta name="twitter:title"       content="StockUpside.io - Top Stocks by Analyst Upside" />
@@ -25,6 +28,14 @@
   <link rel="icon" type="image/png" sizes="512x512" href="/android-chrome-512x512.png" />
   <link rel="manifest" href="/site.webmanifest" />
   <link rel="stylesheet" href="style.css" />
+  <!-- Analytics: Plausible (privacy-friendly, no cookie banner required).
+       Sign up at plausible.io, add stockupside.io as a site, then this
+       script starts tracking pageviews automatically. Custom events
+       (paywall opens, checkout started, free signup) are fired from
+       main.ts via plausible(...) calls. Server-side checkout completion
+       is fired from app.py's /success route (see _track_server_event). -->
+  <script defer data-domain="stockupside.io" src="https://plausible.io/js/script.tagged-events.js"></script>
+  <script>window.plausible = window.plausible || function() { (window.plausible.q = window.plausible.q || []).push(arguments) }</script>
 </head>
 <body>
   <div id="app">
