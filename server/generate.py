@@ -253,6 +253,7 @@ def get_full_universe() -> list:
     # ALPHABET HOLDINGS, etc.), so it produces far more false positives
     # than it catches real SPAC shells. SPAC shells are caught by BLANK
     # CHECK or the standalone SPAC keyword instead.
+    JUNK_SUFFIXES = ("W", "WS", "U", "R")
     JUNK_PLAIN = ("ETF", "REIT", "TRUST", "BOND", "BLANK CHECK", "ACQUISITION")
     JUNK_WORD  = ("SPAC", "FUND", "NOTE")  # require word-boundary match
     try:
