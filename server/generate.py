@@ -256,6 +256,7 @@ def get_full_universe() -> list:
     JUNK_PLAIN = ("ETF", "REIT", "TRUST", "BOND", "BLANK CHECK", "ACQUISITION")
     JUNK_WORD  = ("SPAC", "FUND", "NOTE")  # require word-boundary match
     try:
+        import gzip as _gzip
         url = "https://www.sec.gov/files/company_tickers.json"
         # SEC EDGAR fair-access policy requires a descriptive User-Agent with a
         # real contact email. Using example.com or a fake address gets 403'd.
@@ -266,6 +267,11 @@ def get_full_universe() -> list:
         })
         with urllib.request.urlopen(req, timeout=30) as resp:
             raw = resp.read()
+            # SEC returns gzip-compressed JSON when Accept-Encoding: gzip is
+            # sent. urllib doesn't auto-decompress (unlike requests), so we
+            # detect and handle it manually. 0x1f 0x8b is the gzip magic number.
+            if raw[:2] == b'\x1f\x8b':
+                raw = _gzip.decompress(raw)
             data = json.loads(raw.decode("utf-8"))
 
         tickers = []
