@@ -325,7 +325,7 @@ def get_full_universe() -> list[str]:
 
     try:
         url = "https://www.sec.gov/files/company_tickers.json"
-        req = urllib.request.Request(url, headers={"User-Agent": "stockupside@example.com"})
+        req = urllib.request.Request(url, headers={"User-Agent": "stockupside@gmail.com"})
         with urllib.request.urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read().decode("utf-8"))
 
@@ -3011,14 +3011,19 @@ def watchlist_page():
 @limiter.limit("5 per hour")
 def api_refresh():
     """Admin-only: kick off a data refresh without waiting for 01:00.
-    Spawns generate.py in a background thread so the HTTP response is instant."""
+    Spawns generate.py in a background thread so the HTTP response is instant.
+    Returns the last 10 lines of generate.log so you can see what the
+    previous run did without having to SSH in."""
     import subprocess, sys
     if not _admin_authorized():
         return jsonify({"error": "Unauthorized"}), 401
     if is_generating():
-        return jsonify({"error": "Refresh already in progress"}), 429
+        return jsonify({"error": "Refresh already in progress",
+                        "tip": "Poll /api/refresh-status to watch progress"}), 429
 
     generate_script = os.path.join(BASE_DIR, "server", "generate.py")
+    if not os.path.exists(generate_script):
+        return jsonify({"error": f"generate.py not found at {generate_script}"}), 500
 
     def _run():
         set_generating(True)
@@ -3047,17 +3052,56 @@ def api_refresh():
                 invalidate_memory_cache()
                 print("  ✓  Manual refresh complete — cache invalidated.")
             else:
-                invalidate_memory_cache()  # checkpoint merges may have updated cache
-                print(f"  ⚠  generate.py exited with code {returncode} — check {LOG_PATH}. "
-                      f"Partial progress was checkpointed; re-run /api/refresh to resume.")
+                invalidate_memory_cache()
+                print(f"  ⚠  generate.py exited with code {returncode} — check {LOG_PATH}.")
         except Exception as e:
             print(f"  ⚠  Manual refresh failed: {e}")
         finally:
             set_generating(False)
 
     threading.Thread(target=_run, daemon=True).start()
-    return jsonify({"success": True, "message": "Refresh started in background.",
-                    "last_updated": datetime.date.today().isoformat()})
+
+    # Return the last 20 lines of the log so the caller can see what the
+    # *previous* run did — useful for diagnosing why the last refresh failed
+    # without needing SSH access.
+    log_tail = []
+    try:
+        with open(LOG_PATH, "r") as f:
+            log_tail = f.readlines()[-20:]
+    except FileNotFoundError:
+        log_tail = ["(no log file yet — this is the first refresh)"]
+
+    return jsonify({
+        "success": True,
+        "message": "Refresh started in background. Poll /api/refresh-status to watch.",
+        "generate_script": generate_script,
+        "log_path": LOG_PATH,
+        "previous_log_tail": [l.rstrip() for l in log_tail],
+    })
+
+
+@app.route("/api/refresh-status", methods=["GET"])
+@limiter.limit("60 per minute")
+def api_refresh_status():
+    """Admin-only: check whether a refresh is currently running and
+    tail the log. Safe to poll every few seconds."""
+    if not _admin_authorized():
+        return jsonify({"error": "Unauthorized"}), 401
+
+    log_tail = []
+    try:
+        with open(LOG_PATH, "r") as f:
+            log_tail = f.readlines()[-30:]
+    except FileNotFoundError:
+        log_tail = ["(no log file yet)"]
+
+    stocks = get_stocks_cached()
+    return jsonify({
+        "generating": is_generating(),
+        "stocks_in_cache": len(stocks) if stocks else 0,
+        "last_updated": stocks[0].get("last_updated") if stocks else None,
+        "log_tail": [l.rstrip() for l in log_tail],
+    })
 
 def similar_stocks(target: dict, stocks: list, n: int = 5) -> list:
     """Find stocks with similar fundamentals to `target`.
