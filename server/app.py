@@ -325,7 +325,7 @@ def get_full_universe() -> list[str]:
 
     try:
         url = "https://www.sec.gov/files/company_tickers.json"
-        req = urllib.request.Request(url, headers={"User-Agent": "stockupside@gmail.com"})
+        req = urllib.request.Request(url, headers={"User-Agent": "stockupside@example.com"})
         with urllib.request.urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read().decode("utf-8"))
 
