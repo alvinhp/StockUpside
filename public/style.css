@@ -398,7 +398,7 @@ select, input { font-family: var(--font-sans); }
   background:var(--bg2);border:1px solid var(--border2);
   border-radius:var(--radius-lg);
   padding:32px;max-height:90vh;overflow-y:auto;
-  width:100%;max-width:680px;
+  width:100%;max-width:860px;
   box-shadow:0 24px 64px rgba(0,0,0,.6);
 }
 .modal-lg { max-width:900px; }
@@ -416,8 +416,9 @@ select, input { font-family: var(--font-sans); }
 .pw-head h2 { font-family:var(--font-mono);font-size:22px;margin-bottom:8px; }
 .pw-head p { color:var(--text2);font-size:13px; }
 
-.plans { display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px; }
-@media(max-width:580px){ .plans{grid-template-columns:1fr;} }
+.plans { display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:24px; }
+@media(max-width:720px){ .plans{grid-template-columns:1fr 1fr;} }
+@media(max-width:500px){ .plans{grid-template-columns:1fr;} }
 
 .plan {
   background:var(--bg3);border:1px solid var(--border2);
@@ -425,6 +426,7 @@ select, input { font-family: var(--font-sans); }
   position:relative;display:flex;flex-direction:column;gap:12px;
 }
 .plan.featured { border-color:var(--accent);box-shadow:0 0 20px rgba(240,180,41,.1); }
+.plan.plan-api { border-color:var(--blue); }
 .plan-badge {
   position:absolute;top:-11px;left:50%;transform:translateX(-50%);
   background:var(--accent);color:#000;padding:2px 12px;
@@ -458,6 +460,10 @@ select, input { font-family: var(--font-sans); }
 .btn-sub:disabled { opacity:.6;cursor:not-allowed; }
 .btn-sub-sec { background:var(--bg4);color:var(--text);border:1px solid var(--border2); }
 .btn-sub-sec:hover { background:var(--bg3); }
+.plan-badge-api { background:rgba(88,166,255,.15);color:var(--blue); }
+.btn-sub-api { background:var(--bg4);color:var(--blue);border:1px solid var(--blue);
+               text-decoration:none;text-align:center;display:block; }
+.btn-sub-api:hover { background:rgba(88,166,255,.1); }
 
 .pw-demo { font-size:10px;color:var(--text3);text-align:center;font-family:var(--font-mono); }
 .pw-foot { text-align:center;font-size:11px;color:var(--text3);font-family:var(--font-mono); }

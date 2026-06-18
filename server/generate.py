@@ -14,7 +14,7 @@ The server will serve the previous day's data while this script runs,
 then automatically pick up the new data on the next cache miss.
 """
 
-import json, sqlite3, time, datetime, os, random, urllib.request, sys, signal
+import json, sqlite3, time, datetime, os, random, urllib.request, sys, signal, re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 
@@ -240,9 +240,21 @@ def get_full_universe() -> list:
     # ticker is 5 characters long (4-letter base + 1 suffix char), which
     # matches how exchanges actually construct these symbols. This still
     # isn't perfect, but it stops dropping legitimate 3-4 letter tickers.
-    JUNK_SUFFIXES   = ("W", "WS", "U", "R")
-    JUNK_SUBSTRINGS = ("ETF","FUND","TRUST","REIT","NOTE","BOND",
-                       "SPAC","BLANK","ACQUISITION","HOLDINGS","BLANK CHECK")
+    # ── Junk-name filter ──────────────────────────────────────────────────
+    # Two tiers of matching:
+    # 1. Plain substring: only keywords that can't appear inside a real word
+    #    (ETF, REIT, TRUST, BLANK CHECK, ACQUISITION are always standalone)
+    # 2. Word-boundary regex: keywords that CAN appear inside real words
+    #    - SPAC matches "AEROSPACE" (aeroSPACe) without \b
+    #    - FUND matches "FUNDAMENTAL" without \b
+    #    - NOTE matches "NOTEWORTHY" without \b
+    # HOLDINGS was removed from the filter entirely — too many legitimate
+    # companies use it (DIGITALOCEAN HOLDINGS, VIRGIN GALACTIC HOLDINGS,
+    # ALPHABET HOLDINGS, etc.), so it produces far more false positives
+    # than it catches real SPAC shells. SPAC shells are caught by BLANK
+    # CHECK or the standalone SPAC keyword instead.
+    JUNK_PLAIN = ("ETF", "REIT", "TRUST", "BOND", "BLANK CHECK", "ACQUISITION")
+    JUNK_WORD  = ("SPAC", "FUND", "NOTE")  # require word-boundary match
     try:
         url = "https://www.sec.gov/files/company_tickers.json"
         req = urllib.request.Request(url, headers={"User-Agent": "stockupside@example.com"})
@@ -262,7 +274,9 @@ def get_full_universe() -> list:
             # because it happens to end in W/U/R.
             if len(t) == 5 and any(t.endswith(sfx) for sfx in JUNK_SUFFIXES):
                 continue
-            if any(kw in name for kw in JUNK_SUBSTRINGS):
+            if any(kw in name for kw in JUNK_PLAIN):
+                continue
+            if any(re.search(r'\b' + kw + r'\b', name) for kw in JUNK_WORD):
                 continue
             tickers.append(t)
 
