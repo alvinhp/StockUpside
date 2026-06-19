@@ -19,6 +19,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 
 import yfinance as yf
+import pandas as pd
 
 # ── Paths ──────────────────────────────────────────────────────────────────────
 # Support running as: python3 server/generate.py  OR  python3 generate.py
@@ -58,6 +59,20 @@ def get_db() -> sqlite3.Connection:
     con.execute("PRAGMA busy_timeout=5000")
     return con
 
+def get_stocks_cached() -> list:
+    """Read the most recent cache row. generate.py and app.py are
+    separate processes (no shared Python state), so this is a thin,
+    independent reader rather than an import from app.py — avoids
+    coupling the generator to the Flask app's module-level state."""
+    con = get_db()
+    row = con.execute(
+        "SELECT data FROM cache ORDER BY ts DESC LIMIT 1"
+    ).fetchone()
+    con.close()
+    if not row:
+        return []
+    return json.loads(row[0])
+
 def init_db():
     con = get_db()
     con.execute("""CREATE TABLE IF NOT EXISTS cache(
@@ -88,6 +103,38 @@ def init_db():
         run_date TEXT NOT NULL, ticker TEXT NOT NULL,
         row_json TEXT NOT NULL, ts INTEGER,
         PRIMARY KEY (run_date, ticker))""")
+
+    # ── Per-firm analyst track record ────────────────────────────────────
+    # Same schema as defined in app.py's init_db — generate.py and app.py
+    # are separate processes with no shared state, so both need their own
+    # CREATE TABLE IF NOT EXISTS, matching the existing pattern for
+    # cache/subscribers/snapshots/performance above.
+    con.execute("""CREATE TABLE IF NOT EXISTS analyst_calls (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        ticker TEXT NOT NULL,
+        firm TEXT NOT NULL,
+        grade_date TEXT NOT NULL,
+        from_grade TEXT,
+        to_grade TEXT NOT NULL,
+        action TEXT NOT NULL,
+        price_at_call REAL,
+        first_seen TEXT NOT NULL,
+        UNIQUE(ticker, firm, grade_date, to_grade)
+)""")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_calls_firm ON analyst_calls(firm)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_calls_ticker ON analyst_calls(ticker)")
+    con.execute("""CREATE TABLE IF NOT EXISTS analyst_call_outcomes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        call_id INTEGER NOT NULL,
+        days_later INTEGER NOT NULL,
+        price_then REAL,
+        price_now REAL,
+        actual_return REAL,
+        was_correct INTEGER,
+        checked_date TEXT,
+        UNIQUE(call_id, days_later),
+        FOREIGN KEY(call_id) REFERENCES analyst_calls(id)
+)""")
 
     # ── One-time migration: purge stale snapshots ───────────────────────────
     # Until this fix, `consensus` was derived from Yahoo's recommendationKey,
@@ -225,6 +272,192 @@ def save_snapshot(stocks: list):
     con.commit()
     con.close()
     print(f"  ✓  Snapshot saved: {len(stocks)} stocks for {today}")
+
+
+# ── Per-firm analyst call tracking ──────────────────────────────────────────
+# Kept as a separate pass from the main fetch_ticker_row loop, run less
+# frequently (e.g. weekly via collect_analyst_calls.py as its own cron
+# entry), since it costs one extra Yahoo API call per ticker on top of
+# the main daily refresh, and rating-change history doesn't move fast
+# enough to need fetching every single day.
+
+# 'main'/'reit' (reiterate) carry no directional call to score — the firm
+# isn't predicting a move, just restating an existing rating.
+DIRECTIONAL_ACTIONS = {"up", "down", "init"}
+
+def fetch_analyst_calls(ticker: str) -> list[dict]:
+    """Fetch this ticker's upgrade/downgrade history from Yahoo and
+    return rows shaped for the analyst_calls table. Returns [] on any
+    failure — this is a nice-to-have enrichment, never worth aborting
+    or retrying aggressively over (unlike the core price/target fetch)."""
+    try:
+        t_obj = yf.Ticker(ticker)
+        df = t_obj.upgrades_downgrades
+        if df is None or df.empty:
+            return []
+
+        # Only keep calls from roughly the last 2 years — older history
+        # is interesting but adds bulk for little incremental value, and
+        # outcome-scoring requires reasonably recent price history anyway.
+        cutoff = pd.Timestamp.now(tz=df.index.tz) - pd.Timedelta(days=730)
+        df = df[df.index >= cutoff]
+
+        rows = []
+        for grade_date, row in df.iterrows():
+            rows.append({
+                "ticker":      ticker,
+                "firm":        str(row.get("Firm", "")).strip(),
+                "grade_date":  grade_date.date().isoformat(),
+                "from_grade":  str(row.get("FromGrade", "") or ""),
+                "to_grade":    str(row.get("ToGrade", "")).strip(),
+                "action":      str(row.get("Action", "")).strip().lower(),
+            })
+        return [r for r in rows if r["firm"] and r["to_grade"]]
+    except Exception:
+        return []
+
+def save_analyst_calls(ticker: str, calls: list[dict]):
+    """Insert new analyst_calls rows, fetching price_at_call for any
+    genuinely new row (UNIQUE constraint makes re-running this idempotent
+    — already-seen calls are silently skipped via INSERT OR IGNORE)."""
+    if not calls:
+        return 0
+    now_iso = datetime.datetime.now().isoformat()
+    con = get_db()
+    inserted = 0
+    price_cache: dict[str, float] = {}
+    for c in calls:
+        # Only bother fetching historical price for genuinely new rows —
+        # check first to avoid an extra yfinance history() call (slow,
+        # rate-limit-relevant) for calls we've already recorded.
+        existing = con.execute(
+            "SELECT 1 FROM analyst_calls WHERE ticker=? AND firm=? AND grade_date=? AND to_grade=?",
+            (c["ticker"], c["firm"], c["grade_date"], c["to_grade"]),
+        ).fetchone()
+        if existing:
+            continue
+
+        price_at_call = None
+        if c["grade_date"] not in price_cache:
+            try:
+                t_obj = yf.Ticker(ticker)
+                hist = t_obj.history(start=c["grade_date"],
+                                      end=(datetime.date.fromisoformat(c["grade_date"]) +
+                                           datetime.timedelta(days=5)).isoformat())
+                if not hist.empty:
+                    price_cache[c["grade_date"]] = float(hist["Close"].iloc[0])
+            except Exception:
+                pass
+        price_at_call = price_cache.get(c["grade_date"])
+
+        try:
+            con.execute("""
+                INSERT OR IGNORE INTO analyst_calls
+                (ticker, firm, grade_date, from_grade, to_grade, action, price_at_call, first_seen)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (c["ticker"], c["firm"], c["grade_date"], c["from_grade"],
+                  c["to_grade"], c["action"], price_at_call, now_iso))
+            inserted += 1
+        except Exception as e:
+            print(f"  ⚠  Failed to save call for {ticker}/{c['firm']}: {e}")
+    con.commit()
+    con.close()
+    return inserted
+
+def resolve_analyst_call_outcomes():
+    """Score calls that are now old enough to check: did the stock move
+    in the direction the call predicted (up after an upgrade, down after
+    a downgrade) by 30/60/90 days later? Mirrors the existing
+    resolve_performance_checkpoints pattern for the consensus-level
+    `performance` table — same idea, scoped to individual firm calls."""
+    con = get_db()
+    calls = con.execute("""
+        SELECT id, ticker, action, grade_date, price_at_call
+        FROM analyst_calls
+        WHERE action IN ('up', 'down', 'init') AND price_at_call IS NOT NULL
+    """).fetchall()
+    con.close()
+
+    today = datetime.date.today()
+    resolved = 0
+    for call_id, ticker, action, grade_date, price_at_call in calls:
+        grade_dt = datetime.date.fromisoformat(grade_date)
+        for days_later in (30, 60, 90):
+            target_date = grade_dt + datetime.timedelta(days=days_later)
+            if target_date > today:
+                continue  # not old enough yet
+
+            con = get_db()
+            already = con.execute(
+                "SELECT 1 FROM analyst_call_outcomes WHERE call_id=? AND days_later=?",
+                (call_id, days_later),
+            ).fetchone()
+            con.close()
+            if already:
+                continue
+
+            try:
+                t_obj = yf.Ticker(ticker)
+                hist = t_obj.history(
+                    start=target_date.isoformat(),
+                    end=(target_date + datetime.timedelta(days=5)).isoformat(),
+                )
+                if hist.empty:
+                    continue
+                price_now = float(hist["Close"].iloc[0])
+            except Exception:
+                continue
+
+            actual_return = round((price_now / price_at_call - 1) * 100, 2)
+            if action == "up" or action == "init":
+                was_correct = 1 if actual_return > 0 else 0
+            elif action == "down":
+                was_correct = 1 if actual_return < 0 else 0
+            else:
+                was_correct = None
+
+            con = get_db()
+            con.execute("""
+                INSERT OR IGNORE INTO analyst_call_outcomes
+                (call_id, days_later, price_then, price_now, actual_return, was_correct, checked_date)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (call_id, days_later, price_at_call, price_now, actual_return,
+                  was_correct, today.isoformat()))
+            con.commit()
+            con.close()
+            resolved += 1
+
+    print(f"  ✓  Resolved {resolved} analyst call outcomes")
+    return resolved
+
+def get_firm_track_record(firm: str | None = None) -> list[dict]:
+    """Aggregate win rate per firm across all resolved 90-day outcomes.
+    Pass a specific firm name to filter to one firm's track record."""
+    con = get_db()
+    query = """
+        SELECT c.firm,
+               COUNT(*) as total_calls,
+               SUM(o.was_correct) as correct_calls,
+               AVG(o.actual_return) as avg_return
+        FROM analyst_call_outcomes o
+        JOIN analyst_calls c ON c.id = o.call_id
+        WHERE o.days_later = 90 AND o.was_correct IS NOT NULL
+    """
+    params = []
+    if firm:
+        query += " AND c.firm = ?"
+        params.append(firm)
+    query += " GROUP BY c.firm HAVING total_calls >= 5 ORDER BY correct_calls * 1.0 / total_calls DESC"
+
+    rows = con.execute(query, params).fetchall()
+    con.close()
+    return [{
+        "firm": r[0],
+        "total_calls": r[1],
+        "correct_calls": r[2],
+        "win_rate_pct": round(100 * r[2] / r[1], 1) if r[1] else 0,
+        "avg_return_pct": round(r[3], 2) if r[3] is not None else None,
+    } for r in rows]
 
 # ── Universe fetch ─────────────────────────────────────────────────────────────
 def get_full_universe() -> list:
@@ -665,7 +898,7 @@ def generate_stocks(run_date: str) -> list:
     # back off together rather than one thread pausing while others keep
     # hammering. If you see sustained rate-limiting in generate.log, drop
     # MAX_WORKERS to 2 or 1.
-    MAX_WORKERS = 6
+    MAX_WORKERS = 4
 
     print(f"  →  Fetching analyst targets for {len(remaining_tickers)} tickers "
           f"({len(tickers)} total) with {MAX_WORKERS} concurrent workers...")
@@ -714,6 +947,38 @@ def generate_stocks(run_date: str) -> list:
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    # Separate, less-frequent job for per-firm analyst call tracking.
+    # Run this weekly via its own cron entry, e.g.:
+    #   0 3 * * 0 /usr/bin/python3 /path/to/server/generate.py --analyst-calls
+    # Kept out of the main daily run since it costs an extra Yahoo API
+    # call per ticker on top of the already rate-limit-sensitive main fetch.
+    if "--analyst-calls" in sys.argv:
+        print(f"\n  ▲  StockUpside.io — Analyst Call Tracker")
+        print(f"  →  Started at {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        init_db()
+
+        stocks = get_stocks_cached()
+        if not stocks:
+            print("  ✗  No cached stocks found — run the main generator first.")
+            sys.exit(1)
+
+        total_new = 0
+        for i, s in enumerate(stocks):
+            ticker = s["ticker"]
+            calls = fetch_analyst_calls(ticker)
+            n = save_analyst_calls(ticker, calls)
+            total_new += n
+            if n > 0:
+                print(f"  →  {ticker}: {n} new call(s)")
+            if (i + 1) % 100 == 0:
+                print(f"  ...{i+1}/{len(stocks)} tickers checked, {total_new} new calls so far")
+            time.sleep(0.5 + random.uniform(0.2, 0.5))  # be polite to Yahoo
+
+        print(f"\n  ✓  Collection done: {total_new} new analyst calls recorded")
+        resolve_analyst_call_outcomes()
+        print(f"  ✓  All done.\n")
+        sys.exit(0)
+
     start_time = time.time()
     print(f"\n  ▲  StockUpside.io — Data Generator")
     print(f"  →  Started at {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")

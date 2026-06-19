@@ -627,17 +627,44 @@ def init_db():
         checked_date TEXT,
         UNIQUE(snapshot_date, ticker, days_later))""")
 
-    con.execute("""CREATE TABLE IF NOT EXISTS analyst_targets (
+    # ── Per-firm analyst track record ────────────────────────────────────
+    # Originally designed to store per-firm price targets, but Yahoo's
+    # free upgrade/downgrade feed (yfinance's upgrades_downgrades) only
+    # provides rating changes — firm, from-grade, to-grade, action, date —
+    # not a per-firm price target. Price-target accuracy can only be
+    # measured at the consensus level (see `performance` table above).
+    # What IS measurable per-firm: whether an upgrade/downgrade call was
+    # directionally right — did the stock move the predicted way in the
+    # following weeks. That's what this table is actually for now.
+    con.execute("""CREATE TABLE IF NOT EXISTS analyst_calls (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        date TEXT NOT NULL,
         ticker TEXT NOT NULL,
-        analyst_firm TEXT,
-        analyst_name TEXT,
-        price_target REAL,
-        rating TEXT,
-        prior_target REAL,
-        prior_rating TEXT,
-        UNIQUE(date, ticker, analyst_firm)
+        firm TEXT NOT NULL,
+        grade_date TEXT NOT NULL,      -- ISO date of the rating change
+        from_grade TEXT,
+        to_grade TEXT NOT NULL,
+        action TEXT NOT NULL,          -- 'up' | 'down' | 'main' | 'init' | 'reit'
+        price_at_call REAL,            -- closing price on/near grade_date
+        first_seen TEXT NOT NULL,      -- when our scraper first recorded this row
+        UNIQUE(ticker, firm, grade_date, to_grade)
+)""")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_calls_firm ON analyst_calls(firm)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_calls_ticker ON analyst_calls(ticker)")
+
+    # Outcome of each call, checked 30/60/90 days out — same pattern as
+    # the existing `performance` table, but scoped to the individual call
+    # rather than the aggregate consensus.
+    con.execute("""CREATE TABLE IF NOT EXISTS analyst_call_outcomes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        call_id INTEGER NOT NULL,
+        days_later INTEGER NOT NULL,
+        price_then REAL,
+        price_now REAL,
+        actual_return REAL,
+        was_correct INTEGER,           -- 1 if price moved the predicted direction, 0 if not, NULL if 'main'/'reit' (no directional call)
+        checked_date TEXT,
+        UNIQUE(call_id, days_later),
+        FOREIGN KEY(call_id) REFERENCES analyst_calls(id)
 )""")
 
     # ── API tier ──────────────────────────────────────────────────────────
@@ -4571,6 +4598,188 @@ def render_disclaimer_page() -> str:
 </body>
 </html>"""
 
+@app.route("/firm-track-record")
+def firm_track_record_page():
+    """Public leaderboard of analyst firm win rates — the page the
+    'See full firm rankings →' link on each stock page points to."""
+    con = get_db()
+    rows = con.execute("""
+        SELECT c.firm,
+               COUNT(*) as total_calls,
+               SUM(o.was_correct) as correct_calls,
+               AVG(o.actual_return) as avg_return
+        FROM analyst_call_outcomes o
+        JOIN analyst_calls c ON c.id = o.call_id
+        WHERE o.days_later = 90 AND o.was_correct IS NOT NULL
+        GROUP BY c.firm
+        HAVING total_calls >= 5
+        ORDER BY correct_calls * 1.0 / total_calls DESC
+        LIMIT 100
+    """).fetchall()
+    con.close()
+
+    rows_html = ""
+    if not rows:
+        rows_html = """<tr><td colspan="4" style="text-align:center;color:var(--text2);padding:32px">
+            No firms have 5+ resolved calls yet. Check back soon — this builds up automatically
+            as we track upgrade/downgrade calls over time.</td></tr>"""
+    else:
+        for i, (firm, total, correct, avg_ret) in enumerate(rows, 1):
+            win_rate = round(100 * correct / total, 1)
+            color = "var(--green)" if win_rate >= 60 else "var(--amber)" if win_rate >= 45 else "var(--red)"
+            avg_ret_str = f"{avg_ret:+.1f}%" if avg_ret is not None else "—"
+            rows_html += f"""<tr>
+                <td style="font-family:var(--font-mono);color:var(--text3)">{i}</td>
+                <td>{escape(firm)}</td>
+                <td style="font-family:var(--font-mono);color:{color};font-weight:700">{win_rate}%</td>
+                <td style="font-family:var(--font-mono);color:var(--text2)">{total}</td>
+                <td style="font-family:var(--font-mono);color:var(--text2)">{avg_ret_str}</td>
+            </tr>"""
+
+    yr = datetime.date.today().year
+    return Response(f"""<!DOCTYPE html>
+<html lang="en"><head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Analyst Firm Track Record | StockUpside.io</title>
+  <meta name="description" content="Which Wall Street firms actually call it right? Win rates for analyst upgrade/downgrade calls, tracked 90 days out."/>
+  <link rel="stylesheet" href="/style.css"/>
+  <style>
+    .ftr-wrap {{ max-width:760px;margin:0 auto;padding:32px 20px 64px; }}
+    .ftr-wrap h1 {{ font-family:var(--font-mono);font-size:20px;margin-bottom:6px; }}
+    .ftr-sub {{ color:var(--text2);font-size:13px;margin-bottom:28px;line-height:1.6; }}
+    table {{ width:100%;border-collapse:collapse;font-size:13px; }}
+    th {{ text-align:left;color:var(--text3);font-family:var(--font-mono);font-size:10px;
+          letter-spacing:.08em;padding:10px 12px;border-bottom:1px solid var(--border); }}
+    td {{ padding:10px 12px;border-bottom:1px solid var(--border); }}
+  </style>
+</head>
+<body>
+  <div class="ftr-wrap">
+    <h1>▲ Analyst Firm Track Record</h1>
+    <div class="ftr-sub">
+      Win rate = % of upgrade/downgrade calls where the stock moved in the predicted direction
+      90 days later, across every stock we track. Requires 5+ resolved calls to appear — newer
+      or less-frequent firms will show up here as we accumulate more history.
+      <a href="/blog/how-we-rank-stocks-by-analyst-upside">Read our full methodology →</a>
+    </div>
+    <table>
+      <thead><tr><th>#</th><th>Firm</th><th>Win Rate</th><th>Calls</th><th>Avg Return</th></tr></thead>
+      <tbody>{rows_html}</tbody>
+    </table>
+  </div>
+  <footer class="ftr">
+    <div>© {yr} StockUpside.io · <a href="/disclaimer" style="color:var(--text3)">Not financial advice</a></div>
+  </footer>
+</body></html>""", mimetype="text/html")
+
+
+@app.route("/api/firm-track-record")
+@limiter.limit("600 per hour")
+def api_firm_track_record():
+    """Leaderboard: win rate per analyst firm, based on whether their
+    upgrade/downgrade calls were directionally right 90 days later.
+    Requires >=5 resolved calls to appear, to avoid a firm with 1 lucky
+    call looking like a top performer."""
+    con = get_db()
+    rows = con.execute("""
+        SELECT c.firm,
+               COUNT(*) as total_calls,
+               SUM(o.was_correct) as correct_calls,
+               AVG(o.actual_return) as avg_return
+        FROM analyst_call_outcomes o
+        JOIN analyst_calls c ON c.id = o.call_id
+        WHERE o.days_later = 90 AND o.was_correct IS NOT NULL
+        GROUP BY c.firm
+        HAVING total_calls >= 5
+        ORDER BY correct_calls * 1.0 / total_calls DESC
+        LIMIT 100
+    """).fetchall()
+    con.close()
+    return jsonify({
+        "firms": [{
+            "firm": r[0],
+            "total_calls": r[1],
+            "correct_calls": r[2],
+            "win_rate_pct": round(100 * r[2] / r[1], 1) if r[1] else 0,
+            "avg_return_pct": round(r[3], 2) if r[3] is not None else None,
+        } for r in rows],
+        "methodology": "Win rate = % of upgrade/downgrade calls where the stock moved "
+                        "in the predicted direction 90 days later. Requires 5+ resolved "
+                        "calls. 'Reiterate' ratings aren't scored since they carry no "
+                        "directional prediction.",
+    })
+
+
+@app.route("/api/firm-track-record/<path:firm>")
+@limiter.limit("600 per hour")
+def api_firm_track_record_detail(firm):
+    """Single firm's full call history with outcomes, for a firm detail page."""
+    con = get_db()
+    calls = con.execute("""
+        SELECT c.ticker, c.grade_date, c.from_grade, c.to_grade, c.action,
+               o.days_later, o.actual_return, o.was_correct
+        FROM analyst_calls c
+        LEFT JOIN analyst_call_outcomes o ON o.call_id = c.id AND o.days_later = 90
+        WHERE c.firm = ?
+        ORDER BY c.grade_date DESC
+        LIMIT 200
+    """, (firm,)).fetchall()
+    con.close()
+
+    if not calls:
+        return jsonify({"error": f"No calls found for firm '{firm}'"}), 404
+
+    resolved = [c for c in calls if c[7] is not None]
+    win_rate = round(100 * sum(c[7] for c in resolved) / len(resolved), 1) if resolved else None
+
+    return jsonify({
+        "firm": firm,
+        "total_calls": len(calls),
+        "resolved_calls": len(resolved),
+        "win_rate_pct": win_rate,
+        "calls": [{
+            "ticker": c[0], "grade_date": c[1], "from_grade": c[2],
+            "to_grade": c[3], "action": c[4], "days_later": c[5],
+            "actual_return_pct": c[6], "was_correct": bool(c[7]) if c[7] is not None else None,
+        } for c in calls],
+    })
+
+
+@app.route("/api/stocks/<ticker>/calls")
+@limiter.limit("600 per hour")
+def api_stock_calls(ticker):
+    """Recent analyst calls for a specific ticker, with each firm's
+    overall track record inlined — shown on the stock detail page."""
+    ticker = ticker.upper()
+    con = get_db()
+    calls = con.execute("""
+        SELECT firm, grade_date, from_grade, to_grade, action, price_at_call
+        FROM analyst_calls
+        WHERE ticker = ?
+        ORDER BY grade_date DESC
+        LIMIT 50
+    """, (ticker,)).fetchall()
+
+    result = []
+    for firm, grade_date, from_grade, to_grade, action, price_at_call in calls:
+        track = con.execute("""
+            SELECT COUNT(*), SUM(o.was_correct)
+            FROM analyst_call_outcomes o
+            JOIN analyst_calls c ON c.id = o.call_id
+            WHERE c.firm = ? AND o.days_later = 90 AND o.was_correct IS NOT NULL
+        """, (firm,)).fetchone()
+        total, correct = track if track else (0, 0)
+        result.append({
+            "firm": firm, "grade_date": grade_date, "from_grade": from_grade,
+            "to_grade": to_grade, "action": action, "price_at_call": price_at_call,
+            "firm_win_rate_pct": round(100 * correct / total, 1) if total and total >= 5 else None,
+            "firm_total_calls": total or 0,
+        })
+    con.close()
+    return jsonify({"ticker": ticker, "calls": result})
+
+
 @app.route("/api/accuracy")
 @limiter.limit("600 per hour")
 def api_accuracy():
@@ -4889,6 +5098,71 @@ def _momentum_html(s: dict) -> str:
       </div>
     </div>"""
 
+def _render_analyst_calls(ticker: str) -> str:
+    """Render the 'Recent Analyst Calls' card showing per-firm rating
+    changes with each firm's track record inlined. Returns '' if there's
+    no call history yet — expected for the first weeks after this
+    feature launches, since the weekly collector job needs time to
+    accumulate and resolve enough 90-day outcomes to be meaningful."""
+    con = get_db()
+    calls = con.execute("""
+        SELECT firm, grade_date, from_grade, to_grade, action
+        FROM analyst_calls
+        WHERE ticker = ?
+        ORDER BY grade_date DESC
+        LIMIT 8
+    """, (ticker,)).fetchall()
+
+    if not calls:
+        con.close()
+        return ""
+
+    rows_html = ""
+    for firm, grade_date, from_grade, to_grade, action in calls:
+        track = con.execute("""
+            SELECT COUNT(*), SUM(o.was_correct)
+            FROM analyst_call_outcomes o
+            JOIN analyst_calls c ON c.id = o.call_id
+            WHERE c.firm = ? AND o.days_later = 90 AND o.was_correct IS NOT NULL
+        """, (firm,)).fetchone()
+        total, correct = track if track else (0, 0)
+
+        if total and total >= 5:
+            win_rate = round(100 * correct / total, 0)
+            track_html = f'<span class="ac-track" title="{correct} of {total} calls correct, 90 days out">{win_rate:.0f}% win rate ({total} calls)</span>'
+        else:
+            track_html = '<span class="ac-track ac-track-new">Building track record</span>'
+
+        action_color = {"up": "var(--green)", "down": "var(--red)"}.get(action, "var(--text2)")
+        action_label = {"up": "↑ Upgrade", "down": "↓ Downgrade",
+                         "init": "● Initiated", "main": "— Reiterated"}.get(action, action)
+        firm_safe = escape(firm)
+        grade_safe = escape(f"{from_grade} → {to_grade}" if from_grade else to_grade)
+
+        rows_html += f"""
+        <div class="ac-row">
+          <div class="ac-row-top">
+            <span class="ac-firm">{firm_safe}</span>
+            <span class="ac-action" style="color:{action_color}">{action_label}</span>
+          </div>
+          <div class="ac-row-bottom">
+            <span class="ac-grade">{grade_safe}</span>
+            <span class="ac-date">{grade_date}</span>
+            {track_html}
+          </div>
+        </div>"""
+    con.close()
+
+    return f"""
+  <div class="sp-calls">
+    <h2>RECENT ANALYST CALLS</h2>
+    <p class="sp-calls-sub">Upgrade/downgrade history for {ticker}, with each firm's 90-day
+       track record across all stocks we track. <a href="/firm-track-record">See full firm rankings →</a></p>
+    <div class="ac-list">{rows_html}
+    </div>
+  </div>"""
+
+
 def _render_similar_stocks(similar: list | None) -> str:
     """Render the 'Similar Stocks' card for the stock detail page.
     Returns '' (renders nothing) if there's nothing to show — this is
@@ -5050,6 +5324,24 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
     .sim-name {{ font-size: 11px; color: var(--text2); overflow: hidden; text-overflow: ellipsis;
                  white-space: nowrap; margin-bottom: 4px; }}
     .sim-meta {{ font-size: 10px; color: var(--text3); font-family: var(--font-mono); }}
+    .sp-calls {{ background: var(--bg2); border: 1px solid var(--border); border-radius: 8px;
+                 padding: 24px; margin-bottom: 32px; }}
+    .sp-calls h2 {{ font-family: var(--font-mono); font-size: 11px; letter-spacing: .1em;
+                    color: var(--text3); margin-bottom: 4px; }}
+    .sp-calls-sub {{ font-size: 12px; color: var(--text2); margin-bottom: 16px; }}
+    .sp-calls-sub a {{ color: var(--accent); text-decoration: none; }}
+    .ac-list {{ display: flex; flex-direction: column; gap: 1px; background: var(--border); }}
+    .ac-row {{ background: var(--bg2); padding: 12px 14px; }}
+    .ac-row-top {{ display: flex; justify-content: space-between; align-items: baseline;
+                   margin-bottom: 4px; }}
+    .ac-firm {{ font-size: 13px; font-weight: 600; color: var(--text); }}
+    .ac-action {{ font-family: var(--font-mono); font-size: 11px; font-weight: 700; }}
+    .ac-row-bottom {{ display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }}
+    .ac-grade {{ font-size: 11px; color: var(--text2); }}
+    .ac-date {{ font-family: var(--font-mono); font-size: 10px; color: var(--text3); }}
+    .ac-track {{ font-family: var(--font-mono); font-size: 10px; color: var(--accent);
+                 margin-left: auto; }}
+    .ac-track-new {{ color: var(--text3); font-style: italic; }}
     .sp-cta   {{ background: linear-gradient(135deg, rgba(240,180,41,.12), rgba(240,180,41,.04));
                  border: 1px solid rgba(240,180,41,.3); border-radius: 8px;
                  padding: 28px; text-align: center; }}
@@ -5286,6 +5578,8 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
   </div>
 
   {_render_similar_stocks(similar)}
+
+  {_render_analyst_calls(s["ticker"])}
 
     <div id="stock-accuracy"></div>
   <div class="sp-cta">
