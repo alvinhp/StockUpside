@@ -319,37 +319,68 @@ def fetch_analyst_calls(ticker: str) -> list[dict]:
 def save_analyst_calls(ticker: str, calls: list[dict]):
     """Insert new analyst_calls rows, fetching price_at_call for any
     genuinely new row (UNIQUE constraint makes re-running this idempotent
-    — already-seen calls are silently skipped via INSERT OR IGNORE)."""
+    — already-seen calls are silently skipped via INSERT OR IGNORE).
+
+    Fetches the ticker's full price history ONCE per call to this
+    function, rather than once per individual rating-change row. The
+    previous version called t_obj.history() separately for every new
+    call — for a ticker with 40+ historical rating changes (common on
+    the first backfill run, since fetch_analyst_calls pulls up to 2
+    years of history), that meant 40+ separate network requests just to
+    price one ticker. At scale across thousands of tickers, this
+    triggered Yahoo's rate limiting partway through the run, silently
+    leaving most price_at_call values NULL — which then meant
+    resolve_analyst_call_outcomes() had nothing to score for the vast
+    majority of collected calls, since it requires price_at_call to be
+    non-NULL. One bulk history() call per ticker (not per call) avoids
+    this entirely."""
     if not calls:
         return 0
     now_iso = datetime.datetime.now().isoformat()
     con = get_db()
-    inserted = 0
-    price_cache: dict[str, float] = {}
+
+    # Figure out which rows are genuinely new BEFORE fetching any price
+    # history, so we don't pay for a price lookup on rows we're about to
+    # skip anyway.
+    new_calls = []
     for c in calls:
-        # Only bother fetching historical price for genuinely new rows —
-        # check first to avoid an extra yfinance history() call (slow,
-        # rate-limit-relevant) for calls we've already recorded.
         existing = con.execute(
             "SELECT 1 FROM analyst_calls WHERE ticker=? AND firm=? AND grade_date=? AND to_grade=?",
             (c["ticker"], c["firm"], c["grade_date"], c["to_grade"]),
         ).fetchone()
-        if existing:
-            continue
+        if not existing:
+            new_calls.append(c)
 
-        price_at_call = None
-        if c["grade_date"] not in price_cache:
-            try:
-                t_obj = yf.Ticker(ticker)
-                hist = t_obj.history(start=c["grade_date"],
-                                      end=(datetime.date.fromisoformat(c["grade_date"]) +
-                                           datetime.timedelta(days=5)).isoformat())
-                if not hist.empty:
-                    price_cache[c["grade_date"]] = float(hist["Close"].iloc[0])
-            except Exception:
-                pass
-        price_at_call = price_cache.get(c["grade_date"])
+    if not new_calls:
+        con.close()
+        return 0
 
+    # One bulk price-history fetch covering the full span of grade dates
+    # in this batch, instead of one fetch per call.
+    price_by_date: dict[str, float] = {}
+    try:
+        dates = sorted(c["grade_date"] for c in new_calls)
+        start = dates[0]
+        end = (datetime.date.fromisoformat(dates[-1]) + datetime.timedelta(days=5)).isoformat()
+        t_obj = yf.Ticker(ticker)
+        hist = t_obj.history(start=start, end=end)
+        if not hist.empty:
+            # hist.index is a DatetimeIndex; build a date-string -> close lookup.
+            # For grade dates that fall on a non-trading day (weekend/holiday),
+            # forward-fill to the next available trading day's close.
+            hist = hist.sort_index()
+            for grade_date_str in set(dates):
+                gd = pd.Timestamp(grade_date_str)
+                # Find the first trading day on or after the grade date
+                future = hist.index[hist.index >= gd]
+                if len(future) > 0:
+                    price_by_date[grade_date_str] = float(hist.loc[future[0], "Close"])
+    except Exception as e:
+        print(f"  ⚠  Bulk price history fetch failed for {ticker}: {e}")
+
+    inserted = 0
+    for c in new_calls:
+        price_at_call = price_by_date.get(c["grade_date"])
         try:
             con.execute("""
                 INSERT OR IGNORE INTO analyst_calls
@@ -369,64 +400,98 @@ def resolve_analyst_call_outcomes():
     in the direction the call predicted (up after an upgrade, down after
     a downgrade) by 30/60/90 days later? Mirrors the existing
     resolve_performance_checkpoints pattern for the consensus-level
-    `performance` table — same idea, scoped to individual firm calls."""
+    `performance` table — same idea, scoped to individual firm calls.
+
+    Batches price-history fetches by ticker (one history() call covering
+    every checkpoint date needed for that ticker) rather than one
+    history() call per (call, days_later) triple. The original version
+    made up to 3 separate network requests per eligible call — at
+    ~127,000 eligible calls, that's up to ~380,000 requests in a single
+    run, which is exactly the kind of load that gets rate-limited by
+    Yahoo partway through and silently stops resolving the rest. This is
+    the same root cause and fix pattern as the price_at_call backfill in
+    save_analyst_calls."""
     con = get_db()
     calls = con.execute("""
         SELECT id, ticker, action, grade_date, price_at_call
         FROM analyst_calls
         WHERE action IN ('up', 'down', 'init') AND price_at_call IS NOT NULL
     """).fetchall()
+    # Pull all already-resolved (call_id, days_later) pairs once, up front,
+    # instead of one query per checkpoint — avoids ~380K individual
+    # "already resolved?" lookups on top of the network fetches.
+    already_resolved = set(con.execute(
+        "SELECT call_id, days_later FROM analyst_call_outcomes"
+    ).fetchall())
     con.close()
 
     today = datetime.date.today()
-    resolved = 0
+
+    # Group pending checkpoints by ticker: for each ticker, figure out
+    # every (call_id, days_later, target_date, action, price_at_call)
+    # tuple that's old enough to check and not yet resolved.
+    pending_by_ticker: dict[str, list[tuple]] = {}
     for call_id, ticker, action, grade_date, price_at_call in calls:
         grade_dt = datetime.date.fromisoformat(grade_date)
         for days_later in (30, 60, 90):
+            if (call_id, days_later) in already_resolved:
+                continue
             target_date = grade_dt + datetime.timedelta(days=days_later)
             if target_date > today:
                 continue  # not old enough yet
+            pending_by_ticker.setdefault(ticker, []).append(
+                (call_id, days_later, target_date, action, price_at_call)
+            )
 
-            con = get_db()
-            already = con.execute(
-                "SELECT 1 FROM analyst_call_outcomes WHERE call_id=? AND days_later=?",
-                (call_id, days_later),
-            ).fetchone()
-            con.close()
-            if already:
-                continue
+    if not pending_by_ticker:
+        print("  ✓  Resolved 0 analyst call outcomes (nothing pending)")
+        return 0
 
-            try:
-                t_obj = yf.Ticker(ticker)
-                hist = t_obj.history(
-                    start=target_date.isoformat(),
-                    end=(target_date + datetime.timedelta(days=5)).isoformat(),
-                )
-                if hist.empty:
-                    continue
-                price_now = float(hist["Close"].iloc[0])
-            except Exception:
-                continue
+    resolved = 0
+    con = get_db()
+    for ticker, pending in pending_by_ticker.items():
+        target_dates = sorted(p[2] for p in pending)
+        start = target_dates[0].isoformat()
+        end = (target_dates[-1] + datetime.timedelta(days=5)).isoformat()
+
+        try:
+            t_obj = yf.Ticker(ticker)
+            hist = t_obj.history(start=start, end=end)
+        except Exception as e:
+            print(f"  ⚠  History fetch failed for {ticker}: {e}")
+            continue
+        if hist.empty:
+            continue
+        hist = hist.sort_index()
+
+        for call_id, days_later, target_date, action, price_at_call in pending:
+            gd = pd.Timestamp(target_date)
+            future = hist.index[hist.index >= gd]
+            if len(future) == 0:
+                continue  # no trading day on/after target_date in the fetched range
+            price_now = float(hist.loc[future[0], "Close"])
 
             actual_return = round((price_now / price_at_call - 1) * 100, 2)
-            if action == "up" or action == "init":
+            if action in ("up", "init"):
                 was_correct = 1 if actual_return > 0 else 0
             elif action == "down":
                 was_correct = 1 if actual_return < 0 else 0
             else:
                 was_correct = None
 
-            con = get_db()
             con.execute("""
                 INSERT OR IGNORE INTO analyst_call_outcomes
                 (call_id, days_later, price_then, price_now, actual_return, was_correct, checked_date)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
             """, (call_id, days_later, price_at_call, price_now, actual_return,
                   was_correct, today.isoformat()))
-            con.commit()
-            con.close()
             resolved += 1
 
+        # Commit per-ticker rather than per-outcome — far fewer commits,
+        # and a crash mid-run only loses the current ticker's progress.
+        con.commit()
+
+    con.close()
     print(f"  ✓  Resolved {resolved} analyst call outcomes")
     return resolved
 
