@@ -14,7 +14,7 @@ The server will serve the previous day's data while this script runs,
 then automatically pick up the new data on the next cache miss.
 """
 
-import json, sqlite3, time, datetime, os, random, urllib.request, sys, signal, re
+import json, sqlite3, time, datetime, os, random, urllib.request, sys, signal, re, math
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 
@@ -50,6 +50,34 @@ UNIVERSE_FALLBACK = [
 CONSENSUS_SCORE = {
     "Strong Buy": 5, "Buy": 4, "Hold": 3, "Underperform": 2, "Sell": 1,
 }
+
+def _finite(value, default=0):
+    """Coerce a Yahoo-sourced numeric value to `default` if it's missing,
+    NaN, or +/-Infinity. NaN is truthy in Python (`nan or 0` returns nan,
+    not 0) and every comparison with NaN is False (`nan <= 0` is False),
+    so the common `info.get(...) or 0` pattern does NOT filter NaN out.
+    A single NaN/Infinity float written to the cache becomes a bare
+    NaN/Infinity token when json.dumps serializes it (allow_nan=True by
+    default) — invalid per the JSON spec, which makes browsers' strict
+    JSON.parse() throw and break the entire stocks list, not just one row.
+    """
+    try:
+        if value is None:
+            return default
+        f = float(value)
+        return f if math.isfinite(f) else default
+    except (TypeError, ValueError):
+        return default
+
+def sanitize_row(row: dict) -> dict:
+    """Defense-in-depth: sweep every numeric value in a finished row and
+    replace any NaN/Infinity with 0 before it can reach the cache. This
+    catches future fields too, not just the ones explicitly cleaned with
+    _finite() above."""
+    for k, v in row.items():
+        if isinstance(v, float) and not math.isfinite(v):
+            row[k] = 0.0
+    return row
 
 # ── DB helpers ─────────────────────────────────────────────────────────────────
 def get_db() -> sqlite3.Connection:
@@ -178,6 +206,50 @@ def save_cache(data: list):
     con.close()
     print(f"  ✓  Saved {len(data)} stocks to cache for {today}")
 
+# Minimum fraction of the existing cache's stock count that a freshly
+# completed run must hit before it's trusted to replace the cache outright.
+MIN_ACCEPTABLE_FRACTION = 0.5
+
+def save_final_cache(data: list, run_date: str):
+    """Write the completed run's results to the cache — but unlike a plain
+    save_cache(data) call, this refuses to silently replace a good, full
+    cache with a badly degraded one.
+
+    Bug this guards against: generate_stocks() can finish *without*
+    raising (so none of the crash-recovery / merge_progress_into_cache
+    machinery kicks in) while still having failed on most tickers — e.g.
+    Yahoo rate-limits hard for hours and only ~100 of ~3,800 tickers come
+    back with valid data. A plain save_cache(data) would overwrite the
+    existing thousands-of-stocks cache with that tiny degraded list. If
+    one of those rows also carries a non-finite value (see _finite() /
+    sanitize_row() above), the resulting JSON breaks the frontend
+    entirely. Either way, this is a major regression no caller should be
+    able to cause by simply finishing a bad run.
+
+    Instead: if the new data is suspiciously small compared to what's
+    already cached, treat it the same way a mid-run checkpoint would —
+    overlay it onto the existing full cache (fresh data wins per-ticker,
+    everything else is carried over) rather than replacing wholesale.
+    """
+    base_rows = get_most_recent_full_cache(exclude_date=run_date)
+
+    if base_rows and len(data) < len(base_rows) * MIN_ACCEPTABLE_FRACTION:
+        print(f"  ⚠  Only {len(data)} stocks came back this run, vs "
+              f"{len(base_rows)} already cached — that's a >50% drop. "
+              f"Refusing to overwrite; merging onto the existing cache "
+              f"instead so the site doesn't regress.")
+        merged: dict = {r["ticker"]: r for r in base_rows}
+        for r in data:
+            merged[r["ticker"]] = r
+        rows = sorted(merged.values(), key=lambda x: x["upside_pct"], reverse=True)
+        for i, r in enumerate(rows):
+            r["rank"] = i + 1
+        save_cache(rows)
+        print(f"  ↻  Merged: {len(data)} fresh + {len(rows) - len(data)} "
+              f"carried-over stocks ({len(rows)} total) saved instead.")
+    else:
+        save_cache(data)
+
 # ── Checkpointing ──────────────────────────────────────────────────────────────
 def load_progress(run_date: str) -> dict:
     """Return {ticker: row_dict} for every ticker already processed in
@@ -285,16 +357,24 @@ def save_snapshot(stocks: list):
 # isn't predicting a move, just restating an existing rating.
 DIRECTIONAL_ACTIONS = {"up", "down", "init"}
 
-def fetch_analyst_calls(ticker: str) -> list[dict]:
+def fetch_analyst_calls(ticker: str) -> tuple[list[dict], bool]:
     """Fetch this ticker's upgrade/downgrade history from Yahoo and
-    return rows shaped for the analyst_calls table. Returns [] on any
-    failure — this is a nice-to-have enrichment, never worth aborting
-    or retrying aggressively over (unlike the core price/target fetch)."""
+    return (rows, errored) shaped for the analyst_calls table.
+
+    Returns ([], False) when the ticker genuinely has no upgrade/downgrade
+    history (a normal, expected outcome for plenty of tickers) — and
+    ([], True) when the *request itself* failed (HTTP error, network
+    issue, etc.). These two cases used to be indistinguishable (both
+    just returned []), which meant a systemic failure — e.g. Yahoo
+    404ing this module for the whole run — looked identical to normal,
+    expected per-ticker gaps in the log. The caller uses `errored` to
+    track a real failure rate and bail out early if it's runaway, instead
+    of silently grinding through the entire universe for hours."""
     try:
         t_obj = yf.Ticker(ticker)
         df = t_obj.upgrades_downgrades
         if df is None or df.empty:
-            return []
+            return [], False
 
         # Only keep calls from roughly the last 2 years — older history
         # is interesting but adds bulk for little incremental value, and
@@ -312,9 +392,9 @@ def fetch_analyst_calls(ticker: str) -> list[dict]:
                 "to_grade":    str(row.get("ToGrade", "")).strip(),
                 "action":      str(row.get("Action", "")).strip().lower(),
             })
-        return [r for r in rows if r["firm"] and r["to_grade"]]
+        return [r for r in rows if r["firm"] and r["to_grade"]], False
     except Exception:
-        return []
+        return [], True
 
 def save_analyst_calls(ticker: str, calls: list[dict]):
     """Insert new analyst_calls rows, fetching price_at_call for any
@@ -809,6 +889,21 @@ def fetch_ticker_row(ticker: str) -> dict | None:
         target_price  = info.get("targetMeanPrice") or 0
         analyst_count = info.get("numberOfAnalystOpinions") or 0
 
+        # NOTE: NaN is truthy in Python, so `nan or 0` returns nan (never
+        # falls through to the 0), and `nan <= 0` is always False (any
+        # comparison with NaN is False) — so a `<= 0` check alone does NOT
+        # catch a NaN price coming back from yfinance. A single NaN here
+        # propagates into upside_pct below, gets written to the cache, and
+        # breaks JSON.parse() on the frontend for the ENTIRE stocks array
+        # (browsers reject the literal NaN/Infinity tokens Python's
+        # json.dumps emits by default). math.isfinite() catches both NaN
+        # and +/-Infinity; isfinite() raises on non-numeric input too,
+        # which is why this is wrapped in the try/except this code already
+        # lives inside.
+        if (not math.isfinite(current_price) or not math.isfinite(target_price)
+                or not math.isfinite(analyst_count)):
+            return None
+
         if current_price <= 0 or target_price <= 0 or analyst_count < 1:
             return None
 
@@ -818,8 +913,8 @@ def fetch_ticker_row(ticker: str) -> dict | None:
         # disappear from the dataset (confusing, especially for stocks on
         # a user's watchlist) instead of just showing a negative number.
 
-        high_target = info.get("targetHighPrice") or 0
-        low_target  = info.get("targetLowPrice")  or 0
+        high_target = _finite(info.get("targetHighPrice"))
+        low_target  = _finite(info.get("targetLowPrice"))
 
         # ── Analyst rating breakdown ─────────────────────────────────────────
         sb = b = h = s = 0
@@ -882,7 +977,7 @@ def fetch_ticker_row(ticker: str) -> dict | None:
         except Exception:
             pass
 
-        return dict(
+        return sanitize_row(dict(
             ticker=ticker,
             name=info.get("longName") or info.get("shortName") or ticker,
             sector=info.get("sector") or "Unknown",
@@ -894,17 +989,17 @@ def fetch_ticker_row(ticker: str) -> dict | None:
             analyst_count=analyst_count,
             consensus=consensus,
             strong_buy=sb, buy=b, hold=h, sell=s,
-            market_cap=_fmt_cap(info.get("marketCap") or 0),
-            market_cap_raw=info.get("marketCap") or 0,
-            pe_ratio=round(info.get("trailingPE") or 0, 1),
+            market_cap=_fmt_cap(_finite(info.get("marketCap"))),
+            market_cap_raw=_finite(info.get("marketCap")),
+            pe_ratio=round(_finite(info.get("trailingPE")), 1),
             ytd_change=ytd_change,
-            week52_low=round(info.get("fiftyTwoWeekLow")  or 0, 2),
-            week52_high=round(info.get("fiftyTwoWeekHigh") or 0, 2),
-            avg_volume=info.get("averageVolume") or 0,
+            week52_low=round(_finite(info.get("fiftyTwoWeekLow")), 2),
+            week52_high=round(_finite(info.get("fiftyTwoWeekHigh")), 2),
+            avg_volume=_finite(info.get("averageVolume")),
             last_updated=datetime.date.today().isoformat(),
             eps=info.get("trailingEps"),
-            forward_pe=round(info.get("forwardPE") or 0, 1),
-            peg_ratio=round(info.get("pegRatio") or 0, 2),
+            forward_pe=round(_finite(info.get("forwardPE")), 1),
+            peg_ratio=round(_finite(info.get("pegRatio")), 2),
             dividend_yield=_normalize_yield(info.get("dividendYield")),
             revenue=info.get("totalRevenue"),
             profit_margin=info.get("profitMargins"),
@@ -912,7 +1007,7 @@ def fetch_ticker_row(ticker: str) -> dict | None:
             momentum_detail=momentum["trend_detail"],
             momentum_streak=momentum["streak_days"],
             momentum_history=momentum["history"],
-        )
+        ))
     except Exception as e:
         print(f"  ⚠  Skipped {ticker} (parse error): {e}")
         return None
@@ -1028,18 +1123,50 @@ if __name__ == "__main__":
             sys.exit(1)
 
         total_new = 0
+        errored = 0
+        CIRCUIT_BREAKER_SAMPLE = 20   # check failure rate after this many tickers
+        CIRCUIT_BREAKER_THRESHOLD = 0.9  # abort if >=90% of the sample errored
+
         for i, s in enumerate(stocks):
             ticker = s["ticker"]
-            calls = fetch_analyst_calls(ticker)
-            n = save_analyst_calls(ticker, calls)
-            total_new += n
-            if n > 0:
-                print(f"  →  {ticker}: {n} new call(s)")
+            calls, did_error = fetch_analyst_calls(ticker)
+            if did_error:
+                errored += 1
+            else:
+                n = save_analyst_calls(ticker, calls)
+                total_new += n
+                if n > 0:
+                    print(f"  →  {ticker}: {n} new call(s)")
+
+            # Circuit breaker: if almost everything in the first batch is
+            # failing, this is almost certainly NOT thousands of individual
+            # "ticker has no data" cases — it's Yahoo 404ing/blocking the
+            # upgrades_downgrades endpoint entirely (a known yfinance/Yahoo
+            # API issue, see github.com/ranaroussi/yfinance/issues/1957).
+            # Without this, the script "succeeds" after hours of runtime
+            # having recorded zero data and given no indication anything
+            # was wrong — exactly what happened here.
+            if (i + 1) == CIRCUIT_BREAKER_SAMPLE:
+                fail_rate = errored / CIRCUIT_BREAKER_SAMPLE
+                if fail_rate >= CIRCUIT_BREAKER_THRESHOLD:
+                    print(f"\n  ✗  {errored}/{CIRCUIT_BREAKER_SAMPLE} tickers "
+                          f"errored ({fail_rate:.0%}) in the opening sample — "
+                          f"this looks like a systemic failure (Yahoo blocking "
+                          f"or 404ing the upgrades_downgrades endpoint), not "
+                          f"normal per-ticker gaps. Aborting early instead of "
+                          f"grinding through all {len(stocks)} tickers for "
+                          f"nothing. Try: pip install --upgrade yfinance, "
+                          f"or check finance.yahoo.com is reachable from this "
+                          f"host. Re-run once that's confirmed working.")
+                    sys.exit(1)
+
             if (i + 1) % 100 == 0:
-                print(f"  ...{i+1}/{len(stocks)} tickers checked, {total_new} new calls so far")
+                print(f"  ...{i+1}/{len(stocks)} tickers checked, "
+                      f"{total_new} new calls, {errored} errored so far")
             time.sleep(0.5 + random.uniform(0.2, 0.5))  # be polite to Yahoo
 
-        print(f"\n  ✓  Collection done: {total_new} new analyst calls recorded")
+        print(f"\n  ✓  Collection done: {total_new} new analyst calls recorded "
+              f"({errored} tickers errored out of {len(stocks)})")
         resolve_analyst_call_outcomes()
         print(f"  ✓  All done.\n")
         sys.exit(0)
@@ -1094,7 +1221,7 @@ if __name__ == "__main__":
 
         # Final write under TODAY's date (in case run_date was yesterday),
         # then clean up the checkpoint table for the completed run.
-        save_cache(data)
+        save_final_cache(data, run_date)
         if run_date != today:
             # Also remove the stale run_date row we wrote via checkpoints
             con = get_db()
