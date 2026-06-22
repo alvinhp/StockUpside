@@ -50,6 +50,26 @@ let tier      = "free";
 let proToken  = localStorage.getItem("su_token") || "";
 let watchlist: Set<string> = new Set();
 const isWatchlistPage = window.location.pathname === "/watchlist";
+const isAlertsPage    = window.location.pathname === "/alerts";
+
+// ── Alerts state ────────────────────────────────────────────────────────────────
+interface AlertRule {
+  id: number;
+  ticker: string;
+  alert_type: string;
+  alert_value: number | null;
+  alert_value_text: string | null;
+  created_at: number;
+  last_triggered: number | null;
+  current_upside: number | null;
+  current_price: number | null;
+  current_rank: number | null;
+  current_consensus: string | null;
+  stock_name: string | null;
+  currently_true: boolean;
+}
+let alertRules: AlertRule[] = [];
+let alertsLoaded = false;
 interface EmailPrefs {
   sector: string; consensus: string; min_analysts: number;
   max_pe: number; max_peg: number; momentum: string;
@@ -132,6 +152,13 @@ async function load() {
     if (isWatchlistPage) {
       applyFilters(); setLoader(false); renderWatchlistPage();
       fixStickyOffset();
+      startTicker();
+      return;
+    }
+
+    if (isAlertsPage) {
+      setLoader(false);
+      await loadAndRenderAlerts();
       startTicker();
       return;
     }
@@ -256,6 +283,295 @@ function doSort(key: string) {
 }
 
 // ── Watchlist page ───────────────────────────────────────────────────────────
+// ── Alerts page ────────────────────────────────────────────────────────────────
+
+function alertTypeLabel(atype: string, aval: number | null, aval_text: string | null): string {
+  switch (atype) {
+    case "upside_above":     return `Upside rises above <strong>${aval}%</strong>`;
+    case "upside_below":     return `Upside falls below <strong>${aval}%</strong>`;
+    case "rank_above":       return `Rank worsens above <strong>#${aval}</strong>`;
+    case "rank_below":       return `Rank improves into top <strong>#${aval}</strong>`;
+    case "consensus_change": return `Consensus changes <span class="al-prev">(currently: ${aval_text || "—"})</span>`;
+    case "target_hit":       return `Price reaches analyst target`;
+    default: return atype;
+  }
+}
+
+function alertStatusBadge(rule: AlertRule): string {
+  const last = rule.last_triggered
+    ? new Date(rule.last_triggered * 1000).toLocaleDateString()
+    : null;
+  if (rule.currently_true) {
+    return `<span class="al-badge al-badge-on">● ACTIVE NOW</span>`;
+  }
+  if (last) {
+    return `<span class="al-badge al-badge-prev">Last fired ${last}</span>`;
+  }
+  return `<span class="al-badge al-badge-wait">Watching…</span>`;
+}
+
+function alertCurrentValues(rule: AlertRule): string {
+  const parts: string[] = [];
+  if (rule.current_upside   != null) parts.push(`Upside: <strong>${rule.current_upside >= 0 ? "+" : ""}${rule.current_upside}%</strong>`);
+  if (rule.current_price    != null) parts.push(`Price: <strong>$${rule.current_price}</strong>`);
+  if (rule.current_rank     != null) parts.push(`Rank: <strong>#${rule.current_rank}</strong>`);
+  if (rule.current_consensus != null) parts.push(`Consensus: <strong>${rule.current_consensus}</strong>`);
+  return parts.join(" · ");
+}
+
+function alertRuleRow(rule: AlertRule): string {
+  const upSign = (rule.current_upside ?? 0) >= 0 ? "+" : "";
+  const upsideColor = !rule.current_upside ? "var(--text2)"
+    : rule.current_upside >= 40 ? "var(--green-b)"
+    : rule.current_upside >= 20 ? "var(--green)"
+    : rule.current_upside >= 0  ? "var(--amber)"
+    : "var(--red)";
+
+  return `<div class="al-row${rule.currently_true ? " al-row-active" : ""}" data-alert-id="${rule.id}">
+    <div class="al-row-main">
+      <div class="al-ticker-col">
+        <a href="/stocks/${rule.ticker}" class="al-ticker">${rule.ticker}</a>
+        <div class="al-name">${escapeHtml(rule.stock_name || "")}</div>
+      </div>
+      <div class="al-condition-col">
+        <div class="al-condition">${alertTypeLabel(rule.alert_type, rule.alert_value, rule.alert_value_text)}</div>
+        <div class="al-current">${alertCurrentValues(rule)}</div>
+      </div>
+      <div class="al-status-col">
+        ${alertStatusBadge(rule)}
+      </div>
+      <div class="al-upside-col" style="color:${upsideColor}">
+        ${rule.current_upside != null ? `${upSign}${rule.current_upside}%` : "—"}
+      </div>
+      <div class="al-actions-col">
+        <button class="al-del-btn" data-alert-id="${rule.id}" title="Delete alert">✕</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function alertAddForm(): string {
+  // Build ticker options from loaded stock data
+  const tickerOpts = all
+    .filter(s => !s.locked)
+    .slice(0, 500)  // cap for performance; user can type to filter
+    .map(s => `<option value="${s.ticker}">${s.ticker} — ${escapeHtml(s.name)}</option>`)
+    .join("");
+
+  return `<div class="al-add-form" id="al-add-form">
+    <div class="al-add-title">＋ New Alert</div>
+    <div class="al-add-row">
+      <div class="al-add-field">
+        <label class="flt-lbl">TICKER</label>
+        <input list="al-ticker-list" id="al-f-ticker" class="al-input" placeholder="e.g. AAPL" autocomplete="off" spellcheck="false"/>
+        <datalist id="al-ticker-list">${tickerOpts}</datalist>
+      </div>
+      <div class="al-add-field">
+        <label class="flt-lbl">ALERT TYPE</label>
+        <select id="al-f-type" class="flt-sel al-sel">
+          <option value="upside_above">Upside rises above %</option>
+          <option value="upside_below">Upside falls below %</option>
+          <option value="rank_below">Rank improves into top #N</option>
+          <option value="rank_above">Rank worsens above #N</option>
+          <option value="consensus_change">Consensus rating changes</option>
+          <option value="target_hit">Price hits analyst target</option>
+        </select>
+      </div>
+      <div class="al-add-field" id="al-f-val-wrap">
+        <label class="flt-lbl" id="al-f-val-lbl">THRESHOLD</label>
+        <input type="number" id="al-f-val" class="al-input al-input-num" placeholder="e.g. 30" step="any" min="0"/>
+      </div>
+    </div>
+    <button class="btn-sub al-add-btn" id="al-add-btn">Add Alert</button>
+    <div id="al-add-err" class="al-add-err hidden"></div>
+  </div>`;
+}
+
+function renderAlertsPage() {
+  const isProUser = tier === "pro";
+  const count = alertRules.length;
+
+  let body: string;
+  if (!isProUser) {
+    body = `<div class="wl-locked-wrap">
+      <div class="wl-locked-icon">🔒</div>
+      <h2>Alerts are a Pro feature</h2>
+      <p>Get notified by email the moment a stock hits your price target,
+         changes analyst consensus, or enters the top ranks. Upgrade to Pro to set up alerts.</p>
+      <button class="btn-pro" id="al-upgrade-btn">Unlock Pro →</button>
+    </div>`;
+  } else if (count === 0 && alertsLoaded) {
+    body = `${alertAddForm()}
+    <div class="wl-empty-wrap" style="margin-top:32px">
+      <div class="wl-empty-icon">🔔</div>
+      <h2>No alerts set up yet</h2>
+      <p>Add your first alert above — we'll email you when the condition is met.</p>
+    </div>`;
+  } else {
+    const activeCount = alertRules.filter(r => r.currently_true).length;
+    body = `
+    ${alertAddForm()}
+    <div class="al-list-header">
+      <div class="al-count">${count} alert${count===1?"":"s"}${activeCount > 0 ? ` · <span class="al-active-count">${activeCount} active now</span>` : ""}</div>
+      <div class="al-list-cols">
+        <span style="flex:0 0 110px">TICKER</span>
+        <span style="flex:1">CONDITION</span>
+        <span style="flex:0 0 130px">STATUS</span>
+        <span style="flex:0 0 80px;text-align:right">UPSIDE</span>
+        <span style="flex:0 0 40px"></span>
+      </div>
+    </div>
+    <div class="al-list" id="al-list">
+      ${alertRules.map(r => alertRuleRow(r)).join("")}
+    </div>`;
+  }
+
+  document.getElementById("app")!.innerHTML = `
+    ${header()}
+    <div class="wl-wrap">
+      <div class="wl-title-row">
+        <h1>🔔 Price Alerts</h1>
+        <p class="al-subtitle">Email notifications when your conditions are met. Checked nightly after data updates.</p>
+      </div>
+      <div class="wl-tabs">
+        <a href="/watchlist" class="wl-tab">★ Watchlist</a>
+        <span class="wl-tab wl-tab-active">🔔 Alerts</span>
+      </div>
+      <div id="al-page-body">${body}</div>
+    </div>
+    ${footer()}
+    ${paywallModal()}
+    <div id="toast-el" class="toast hidden"></div>`;
+
+  bindGlobals();
+  bindAlerts();
+  const upg = document.getElementById("al-upgrade-btn");
+  if (upg) upg.onclick = () => showPW();
+}
+
+async function loadAndRenderAlerts() {
+  renderAlertsPage(); // render immediately (may show empty state)
+  if (tier !== "pro") return;
+  try {
+    const r = await fetch(`${API}/alerts?token=${encodeURIComponent(proToken)}`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    alertRules = await r.json();
+    alertsLoaded = true;
+    renderAlertsPage();
+  } catch (e) {
+    toast("Could not load alerts — " + String(e), "err");
+  }
+}
+
+function bindAlerts() {
+  if (tier !== "pro") return;
+
+  // Delete buttons
+  document.querySelectorAll<HTMLButtonElement>(".al-del-btn").forEach(btn => {
+    btn.onclick = async () => {
+      const id = parseInt(btn.dataset.alertId || "0");
+      if (!id) return;
+      if (!confirm("Delete this alert?")) return;
+      btn.disabled = true;
+      try {
+        const r = await fetch(`${API}/alerts`, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json", "X-Token": proToken },
+          body: JSON.stringify({ id }),
+        });
+        const d = await r.json();
+        if (d.success) {
+          alertRules = alertRules.filter(a => a.id !== id);
+          renderAlertsPage();
+          toast("Alert deleted", "ok");
+        } else {
+          toast(d.error || "Could not delete", "err");
+          btn.disabled = false;
+        }
+      } catch {
+        toast("Could not connect", "err");
+        btn.disabled = false;
+      }
+    };
+  });
+
+  // Show/hide threshold input based on alert type
+  const typeEl  = document.getElementById("al-f-type")  as HTMLSelectElement;
+  const valWrap = document.getElementById("al-f-val-wrap") as HTMLElement;
+  const valLbl  = document.getElementById("al-f-val-lbl") as HTMLElement;
+  const valEl   = document.getElementById("al-f-val")   as HTMLInputElement;
+
+  function updateValField() {
+    if (!typeEl) return;
+    const t = typeEl.value;
+    const needsNum = ["upside_above", "upside_below", "rank_above", "rank_below"].includes(t);
+    if (valWrap) valWrap.style.display = needsNum ? "" : "none";
+    if (valLbl) {
+      valLbl.textContent = t.startsWith("upside") ? "THRESHOLD (%)" : "THRESHOLD (rank #)";
+    }
+    if (valEl) valEl.placeholder = t.startsWith("upside") ? "e.g. 30" : "e.g. 25";
+  }
+  if (typeEl) { typeEl.onchange = updateValField; updateValField(); }
+
+  // Add alert form submission
+  const addBtn = document.getElementById("al-add-btn") as HTMLButtonElement;
+  const errEl  = document.getElementById("al-add-err") as HTMLElement;
+  const tickerEl = document.getElementById("al-f-ticker") as HTMLInputElement;
+
+  function showAddErr(msg: string) {
+    if (!errEl) return;
+    errEl.textContent = msg;
+    errEl.classList.remove("hidden");
+    setTimeout(() => errEl.classList.add("hidden"), 5000);
+  }
+
+  if (addBtn) {
+    addBtn.onclick = async () => {
+      const ticker = (tickerEl?.value || "").trim().toUpperCase();
+      const atype  = typeEl?.value || "";
+      const aval   = valEl?.value  ? parseFloat(valEl.value) : null;
+
+      if (!ticker) { showAddErr("Enter a ticker symbol."); return; }
+      if (!atype)  { showAddErr("Select an alert type."); return; }
+
+      const needsNum = ["upside_above", "upside_below", "rank_above", "rank_below"].includes(atype);
+      if (needsNum && (aval === null || isNaN(aval))) {
+        showAddErr("Enter a numeric threshold for this alert type."); return;
+      }
+
+      addBtn.disabled = true;
+      addBtn.textContent = "Adding…";
+      try {
+        const r = await fetch(`${API}/alerts`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Token": proToken },
+          body: JSON.stringify({ ticker, alert_type: atype, alert_value: aval }),
+        });
+        const d = await r.json();
+        if (d.success) {
+          // Reload full list to get server-populated fields (stock_name, currently_true, etc.)
+          const lr = await fetch(`${API}/alerts?token=${encodeURIComponent(proToken)}`);
+          alertRules = await lr.json();
+          renderAlertsPage();
+          toast(`Alert added for ${ticker}`, "ok");
+        } else {
+          showAddErr(d.error || "Could not add alert.");
+        }
+      } catch {
+        showAddErr("Could not connect.");
+      } finally {
+        addBtn.disabled = false;
+        addBtn.textContent = "Add Alert";
+      }
+    };
+
+    // Also submit on Enter in ticker/value inputs
+    [tickerEl, valEl].forEach(el => {
+      if (el) el.onkeydown = (e) => { if (e.key === "Enter") addBtn.click(); };
+    });
+  }
+}
+
 function watchlistTable(items: Stock[]): string {
   if (tier !== "pro") {
     return `<div class="wl-locked-wrap">
@@ -293,6 +609,10 @@ function renderWatchlistPage() {
       <div class="wl-title-row">
         <h1>★ My Watchlist</h1>
         ${tier === "pro" ? `<div class="wl-count">${items.length} stock${items.length===1?"":"s"} tracked</div>` : ""}
+      </div>
+      <div class="wl-tabs">
+        <span class="wl-tab wl-tab-active">★ Watchlist</span>
+        <a href="/alerts" class="wl-tab">🔔 Alerts</a>
       </div>
       <div class="tbl-wrap">${watchlistTable(items)}</div>
     </div>
@@ -376,6 +696,7 @@ function header() {
       <a href="/sectors" class="hdr-link">Sectors</a>
       <a href="/blog" class="hdr-link">Blog</a>
       <a href="/watchlist" class="hdr-link">My Watchlist</a>
+      <a href="/alerts" class="hdr-link">🔔 Alerts</a>
       <div class="live-chip"><span class="live-dot"></span>LIVE</div>
       <div class="refresh-chip">
         <span class="rc-lbl">UPDATES IN</span>

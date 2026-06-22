@@ -140,6 +140,11 @@ def nightly_refresh():
                     if returncode == 0:
                         invalidate_memory_cache()
                         log("Nightly refresh complete — cache invalidated (exit 0).")
+                        log("Running alert checker...")
+                        try:
+                            check_and_fire_alerts()
+                        except Exception as e:
+                            log(f"Alert check failed: {e}")
                         break
                     else:
                         log(f"generate.py exited with code {returncode} "
@@ -188,6 +193,272 @@ def send_digest_job():
         if send_email(addr, subj, html, text):
             sent += 1
     print(f"  ✓  Weekly digest sent to {sent}/{len(subs)} subscribers")
+
+# ── Pro alerts engine ──────────────────────────────────────────────────────────
+ALERT_COOLDOWN_DAYS = 1   # minimum gap between repeated fires for the same rule
+ALERT_MAX_PER_USER  = 20  # hard cap on alert rules per Pro subscriber
+
+ALERT_TYPES = {
+    "upside_above":     "Upside % rises above threshold",
+    "upside_below":     "Upside % falls below threshold",
+    "rank_above":       "Rank worsens (number rises) above threshold",
+    "rank_below":       "Rank improves to at or below threshold",
+    "consensus_change": "Consensus rating changes",
+    "target_hit":       "Price within 1% of analyst consensus target",
+}
+
+def _alert_condition_met(alert: dict, stock: dict) -> bool:
+    """Return True if this alert rule's condition is satisfied by the
+    current stock data. Pure function — no DB reads."""
+    atype = alert["alert_type"]
+    val   = alert.get("alert_value")
+
+    if atype == "upside_above":
+        return val is not None and stock["upside_pct"] >= val
+    if atype == "upside_below":
+        return val is not None and stock["upside_pct"] <= val
+    if atype == "rank_above":
+        return val is not None and stock["rank"] >= val
+    if atype == "rank_below":
+        return val is not None and stock["rank"] <= val
+    if atype == "consensus_change":
+        prev = alert.get("alert_value_text", "")
+        return bool(prev) and stock.get("consensus", "") != prev
+    if atype == "target_hit":
+        cp = stock.get("current_price", 0)
+        tp = stock.get("target_price", 0)
+        return tp > 0 and cp >= tp * 0.99
+    return False
+
+def _alert_email_html(triggered: list[dict]) -> tuple[str, str, str]:
+    """Render the alert digest email for one subscriber.
+
+    `triggered` is a list of dicts, each containing the alert rule and
+    the matching stock data merged together. Returns (subject, html, text).
+    """
+    count = len(triggered)
+    subject = (f"▲ StockUpside alert — {triggered[0]['ticker']} triggered"
+               if count == 1
+               else f"▲ StockUpside — {count} alerts triggered")
+
+    rows_html = ""
+    rows_text = ""
+    for t in triggered:
+        s      = t["stock"]
+        atype  = t["alert_type"]
+        ticker = t["ticker"]
+        upside_sign = "+" if s["upside_pct"] >= 0 else ""
+        upside_color = ("#00b85c" if s["upside_pct"] >= 40 else
+                        "#1a9e5c" if s["upside_pct"] >= 20 else
+                        "#e6a817" if s["upside_pct"] >= 0  else
+                        "#d93025")
+
+        # Human-readable description of what fired
+        if atype == "upside_above":
+            trigger_desc = f"Upside rose above {t['alert_value']}% → now {upside_sign}{s['upside_pct']}%"
+        elif atype == "upside_below":
+            trigger_desc = f"Upside fell below {t['alert_value']}% → now {upside_sign}{s['upside_pct']}%"
+        elif atype == "rank_above":
+            trigger_desc = f"Rank worsened above #{int(t['alert_value'])} → now #{s['rank']}"
+        elif atype == "rank_below":
+            trigger_desc = f"Rank improved into top #{int(t['alert_value'])} → now #{s['rank']}"
+        elif atype == "consensus_change":
+            trigger_desc = f"Consensus changed from {t['alert_value_text']} → {s['consensus']}"
+        elif atype == "target_hit":
+            trigger_desc = (f"Price ${s['current_price']} is within 1% of "
+                            f"analyst target ${s['target_price']}")
+        else:
+            trigger_desc = atype
+
+        rows_html += f"""
+        <tr style="border-bottom:1px solid #2a2a2a">
+          <td style="padding:14px 16px;vertical-align:top">
+            <a href="https://stockupside.io/stocks/{ticker}"
+               style="font-family:monospace;font-size:15px;font-weight:700;
+                      color:#00e5ff;text-decoration:none">{ticker}</a>
+            <div style="font-size:12px;color:#888;margin-top:2px">{s.get('name','')}</div>
+          </td>
+          <td style="padding:14px 16px;vertical-align:top">
+            <div style="font-size:13px;color:#ccc">{trigger_desc}</div>
+          </td>
+          <td style="padding:14px 16px;vertical-align:top;text-align:right;white-space:nowrap">
+            <div style="font-family:monospace;font-size:14px;font-weight:700;color:{upside_color}">
+              {upside_sign}{s['upside_pct']}%
+            </div>
+            <div style="font-size:11px;color:#666;margin-top:2px">upside</div>
+          </td>
+          <td style="padding:14px 16px;vertical-align:top;text-align:right;white-space:nowrap">
+            <div style="font-family:monospace;font-size:13px;color:#ccc">
+              ${s['current_price']}
+            </div>
+            <div style="font-size:11px;color:#666;margin-top:2px">price</div>
+          </td>
+          <td style="padding:14px 16px;vertical-align:top;text-align:right;white-space:nowrap">
+            <div style="font-family:monospace;font-size:13px;color:#aaa">
+              #{s['rank']}
+            </div>
+            <div style="font-size:11px;color:#666;margin-top:2px">rank</div>
+          </td>
+        </tr>"""
+
+        rows_text += (f"\n{ticker} — {trigger_desc}\n"
+                      f"  Upside: {upside_sign}{s['upside_pct']}%  "
+                      f"Price: ${s['current_price']}  Rank: #{s['rank']}\n"
+                      f"  https://stockupside.io/stocks/{ticker}\n")
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"/></head>
+<body style="margin:0;padding:0;background:#0d0d0d;font-family:-apple-system,BlinkMacSystemFont,
+             'Segoe UI',sans-serif;color:#e0e0e0">
+  <table width="100%" cellpadding="0" cellspacing="0"
+         style="max-width:640px;margin:0 auto;padding:32px 16px">
+    <tr><td>
+      <div style="margin-bottom:24px">
+        <span style="font-family:monospace;font-size:18px;font-weight:700;color:#00e5ff">
+          ▲ STOCKUPSIDE.IO
+        </span>
+        <span style="font-size:12px;color:#555;margin-left:12px">Pro Alerts</span>
+      </div>
+      <h1 style="font-size:16px;font-weight:500;color:#e0e0e0;margin:0 0 6px">
+        {count} alert{'s' if count != 1 else ''} triggered
+      </h1>
+      <p style="font-size:12px;color:#666;margin:0 0 24px">
+        {datetime.date.today().strftime('%B %d, %Y')} · Updated daily
+      </p>
+      <table width="100%" cellpadding="0" cellspacing="0"
+             style="border:1px solid #2a2a2a;border-radius:6px;
+                    border-collapse:collapse;font-size:13px">
+        <thead>
+          <tr style="background:#1a1a1a;border-bottom:1px solid #333">
+            <th style="padding:10px 16px;text-align:left;font-size:9px;
+                       color:#555;letter-spacing:.1em;font-weight:500">TICKER</th>
+            <th style="padding:10px 16px;text-align:left;font-size:9px;
+                       color:#555;letter-spacing:.1em;font-weight:500">TRIGGER</th>
+            <th style="padding:10px 16px;text-align:right;font-size:9px;
+                       color:#555;letter-spacing:.1em;font-weight:500">UPSIDE</th>
+            <th style="padding:10px 16px;text-align:right;font-size:9px;
+                       color:#555;letter-spacing:.1em;font-weight:500">PRICE</th>
+            <th style="padding:10px 16px;text-align:right;font-size:9px;
+                       color:#555;letter-spacing:.1em;font-weight:500">RANK</th>
+          </tr>
+        </thead>
+        <tbody>{rows_html}</tbody>
+      </table>
+      <div style="margin-top:24px;padding:16px;background:#111;border-radius:6px;
+                  border:1px solid #1e1e1e">
+        <p style="margin:0 0 8px;font-size:12px;color:#888">Manage your alerts</p>
+        <a href="https://stockupside.io/alerts"
+           style="font-size:13px;color:#00e5ff;text-decoration:none">
+          stockupside.io/alerts →
+        </a>
+      </div>
+      <p style="margin-top:24px;font-size:11px;color:#444;line-height:1.6">
+        You're receiving this because you set up price alerts on StockUpside.io Pro.
+        <a href="{_unsubscribe_url(triggered[0]['email'])}"
+           style="color:#555">Unsubscribe</a>
+      </p>
+    </td></tr>
+  </table>
+</body>
+</html>"""
+
+    text = f"StockUpside.io Pro Alerts — {datetime.date.today()}\n"
+    text += f"{count} alert{'s' if count != 1 else ''} triggered:\n"
+    text += rows_text
+    text += f"\nManage alerts: https://stockupside.io/alerts\n"
+
+    return subject, html, text
+
+
+def check_and_fire_alerts():
+    """Evaluate every active alert rule against today's cached stock data
+    and send email notifications for any that fire.
+
+    Called by nightly_refresh() after generate.py completes and the
+    in-memory cache is invalidated — so stock data is always fresh when
+    this runs. Safe to call manually for testing.
+
+    Cooldown: an alert won't fire again within ALERT_COOLDOWN_DAYS of its
+    last trigger, so a persistently-true condition (e.g. rank stays above
+    threshold for weeks) doesn't send an email every single day.
+    """
+    stocks = get_stocks_cached()
+    if not stocks:
+        print("  ⚠  Alert check skipped — no stock data")
+        return
+
+    stock_map = {s["ticker"]: s for s in stocks}
+
+    con = get_db()
+    alerts = con.execute(
+        "SELECT id, email, ticker, alert_type, alert_value, alert_value_text, last_triggered "
+        "FROM alerts WHERE active=1"
+    ).fetchall()
+    con.close()
+
+    if not alerts:
+        return
+
+    now        = int(time.time())
+    cooldown_s = ALERT_COOLDOWN_DAYS * 86400
+
+    # Group fired alerts by subscriber email so we send one digest per
+    # user rather than one email per alert rule.
+    fired_by_email: dict[str, list[dict]] = {}
+
+    for row in alerts:
+        alert_id, email_addr, ticker, atype, aval, aval_text, last_triggered = row
+
+        # Skip if still in cooldown
+        if last_triggered and (now - last_triggered) < cooldown_s:
+            continue
+
+        stock = stock_map.get(ticker)
+        if not stock:
+            continue   # ticker dropped out of universe — leave rule intact
+
+        alert = {
+            "id": alert_id, "email": email_addr, "ticker": ticker,
+            "alert_type": atype, "alert_value": aval, "alert_value_text": aval_text,
+        }
+
+        if _alert_condition_met(alert, stock):
+            alert["stock"] = stock
+            fired_by_email.setdefault(email_addr, []).append(alert)
+
+    if not fired_by_email:
+        print("  ✓  Alert check complete — no alerts triggered")
+        return
+
+    total_sent = 0
+    con = get_db()
+    for email_addr, triggered in fired_by_email.items():
+        subject, html, text = _alert_email_html(triggered)
+        if send_email(email_addr, subject, html, text):
+            total_sent += 1
+            # Update last_triggered for every rule that fired in this batch
+            fired_ids = [t["id"] for t in triggered]
+            con.executemany(
+                "UPDATE alerts SET last_triggered=? WHERE id=?",
+                [(now, aid) for aid in fired_ids]
+            )
+            # For consensus_change alerts: update alert_value_text to the
+            # new consensus so the next fire only triggers on a *further*
+            # change, not on the same change repeatedly.
+            for t in triggered:
+                if t["alert_type"] == "consensus_change":
+                    con.execute(
+                        "UPDATE alerts SET alert_value_text=? WHERE id=?",
+                        (t["stock"]["consensus"], t["id"])
+                    )
+    con.commit()
+    con.close()
+
+    total_fired = sum(len(v) for v in fired_by_email.values())
+    print(f"  ✓  Alert check complete — {total_fired} rules fired, "
+          f"emails sent to {total_sent}/{len(fired_by_email)} subscribers")
+
 
 # ── Stock universe ─────────────────────────────────────────────────────────────
 UNIVERSE = [
@@ -693,6 +964,33 @@ def init_db():
         date TEXT NOT NULL,
         request_count INTEGER DEFAULT 0,
         PRIMARY KEY (api_key, date))""")
+
+    # ── Pro price alerts ──────────────────────────────────────────────────
+    # Each row is one alert rule for one Pro subscriber. The checker runs
+    # nightly after generate.py updates the cache and fires send_email()
+    # for every rule whose condition is newly satisfied. last_triggered is
+    # used to enforce a cooldown so one event doesn't send daily until the
+    # user deletes the rule.
+    #
+    # alert_type values:
+    #   "upside_above"     — upside_pct rises ABOVE alert_value
+    #   "upside_below"     — upside_pct falls BELOW alert_value
+    #   "rank_above"       — rank number rises ABOVE alert_value (rank worsens)
+    #   "rank_below"       — rank improves TO OR BELOW alert_value
+    #   "consensus_change" — consensus label differs from alert_value_text
+    #   "target_hit"       — price within 1% of analyst consensus target
+    con.execute("""CREATE TABLE IF NOT EXISTS alerts(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT NOT NULL,
+        ticker TEXT NOT NULL,
+        alert_type TEXT NOT NULL,
+        alert_value REAL,
+        alert_value_text TEXT,
+        created_at INTEGER NOT NULL,
+        last_triggered INTEGER,
+        active INTEGER DEFAULT 1)""")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_alerts_email ON alerts(email)")
+    con.execute("CREATE INDEX IF NOT EXISTS idx_alerts_ticker ON alerts(ticker)")
 
     con.commit()
     con.close()
@@ -3031,6 +3329,181 @@ def api_watchlist():
 def watchlist_page():
     # Same pattern as /stocks — let the frontend (main.js) detect the path
     # and render the watchlist view client-side.
+    return send_from_directory(PUBLIC_DIR, "index.html")
+
+
+# ── Pro alerts API ─────────────────────────────────────────────────────────────
+
+@app.route("/api/alerts", methods=["GET", "POST", "DELETE", "OPTIONS"])
+@limiter.limit("60 per hour")
+def api_alerts():
+    """Pro-only CRUD for alert rules.
+
+    GET    → list all active alert rules for the authenticated user,
+             joined with current stock data so the UI can show live values.
+    POST   → create a new alert rule. Body:
+               { ticker, alert_type, alert_value?, alert_value_text? }
+             Returns the created rule's id.
+    DELETE → delete an alert rule. Body: { id }
+
+    All methods require a valid Pro session token (X-Token header or
+    ?token= query param), same as /api/watchlist.
+    """
+    if request.method == "OPTIONS":
+        return jsonify({}), 200
+
+    token      = request.headers.get("X-Token") or request.args.get("token", "")
+    email_addr = _resolve_token_email(token)
+    if not email_addr:
+        return jsonify({"error": "Pro subscription required"}), 403
+
+    con = get_db()
+
+    # ── GET ───────────────────────────────────────────────────────────────
+    if request.method == "GET":
+        rows = con.execute(
+            "SELECT id, ticker, alert_type, alert_value, alert_value_text, "
+            "created_at, last_triggered "
+            "FROM alerts WHERE email=? AND active=1 ORDER BY created_at DESC",
+            (email_addr,)
+        ).fetchall()
+        con.close()
+
+        stocks     = get_stocks_cached()
+        stock_map  = {s["ticker"]: s for s in stocks} if stocks else {}
+
+        result = []
+        for row in rows:
+            aid, ticker, atype, aval, aval_text, created_at, last_triggered = row
+            stock = stock_map.get(ticker, {})
+            result.append({
+                "id":               aid,
+                "ticker":           ticker,
+                "alert_type":       atype,
+                "alert_value":      aval,
+                "alert_value_text": aval_text,
+                "created_at":       created_at,
+                "last_triggered":   last_triggered,
+                # Live stock snapshot so the UI can show current values
+                "current_upside":   stock.get("upside_pct"),
+                "current_price":    stock.get("current_price"),
+                "current_rank":     stock.get("rank"),
+                "current_consensus":stock.get("consensus"),
+                "stock_name":       stock.get("name"),
+                # Whether the condition is *currently* met (useful for UI)
+                "currently_true":   bool(stock and _alert_condition_met(
+                    {"alert_type": atype, "alert_value": aval,
+                     "alert_value_text": aval_text}, stock
+                )),
+            })
+        return jsonify(result)
+
+    # ── POST ──────────────────────────────────────────────────────────────
+    if request.method == "POST":
+        body = request.get_json(silent=True) or {}
+        ticker    = str(body.get("ticker", "")).upper().strip()
+        atype     = str(body.get("alert_type", "")).strip()
+        aval      = body.get("alert_value")
+        aval_text = str(body.get("alert_value_text", "") or "").strip()
+
+        if not ticker or not atype:
+            con.close()
+            return jsonify({"error": "ticker and alert_type are required"}), 400
+
+        if atype not in ALERT_TYPES:
+            con.close()
+            return jsonify({"error": f"Unknown alert_type. Valid: {list(ALERT_TYPES)}"}), 400
+
+        # Numeric threshold required for upside/rank alert types
+        if atype in ("upside_above", "upside_below", "rank_above", "rank_below"):
+            if aval is None:
+                con.close()
+                return jsonify({"error": f"alert_value required for {atype}"}), 400
+            try:
+                aval = float(aval)
+            except (TypeError, ValueError):
+                con.close()
+                return jsonify({"error": "alert_value must be a number"}), 400
+
+        # For consensus_change: seed alert_value_text with the current
+        # consensus so the rule fires on the *next* change, not immediately.
+        if atype == "consensus_change" and not aval_text:
+            stocks    = get_stocks_cached()
+            stock_map = {s["ticker"]: s for s in stocks} if stocks else {}
+            current   = stock_map.get(ticker, {}).get("consensus", "")
+            aval_text = current
+
+        # Validate ticker exists in our universe
+        stocks    = get_stocks_cached()
+        tickers   = {s["ticker"] for s in stocks} if stocks else set()
+        if ticker not in tickers:
+            con.close()
+            return jsonify({"error": f"{ticker} not found in current stock universe"}), 404
+
+        # Per-user cap
+        count = con.execute(
+            "SELECT COUNT(*) FROM alerts WHERE email=? AND active=1",
+            (email_addr,)
+        ).fetchone()[0]
+        if count >= ALERT_MAX_PER_USER:
+            con.close()
+            return jsonify({
+                "error": f"Alert limit reached ({ALERT_MAX_PER_USER} max per account). "
+                         "Delete an existing alert to add a new one."
+            }), 429
+
+        now = int(time.time())
+        cur = con.execute(
+            "INSERT INTO alerts (email, ticker, alert_type, alert_value, "
+            "alert_value_text, created_at, active) VALUES (?,?,?,?,?,?,1)",
+            (email_addr, ticker, atype, aval, aval_text or None, now)
+        )
+        con.commit()
+        new_id = cur.lastrowid
+        con.close()
+        return jsonify({"success": True, "id": new_id}), 201
+
+    # ── DELETE ────────────────────────────────────────────────────────────
+    if request.method == "DELETE":
+        body   = request.get_json(silent=True) or {}
+        alert_id = body.get("id")
+        if not alert_id:
+            con.close()
+            return jsonify({"error": "id required"}), 400
+        # Soft-delete: set active=0 so history is preserved for debugging.
+        # Only allow deleting rows that actually belong to this subscriber.
+        con.execute(
+            "UPDATE alerts SET active=0 WHERE id=? AND email=?",
+            (int(alert_id), email_addr)
+        )
+        con.commit()
+        con.close()
+        return jsonify({"success": True})
+
+    con.close()
+    return jsonify({"error": "method not allowed"}), 405
+
+
+@app.route("/api/alerts/test", methods=["POST"])
+@limiter.limit("5 per hour")
+def api_alerts_test():
+    """Admin-only: manually trigger the alert checker. Useful for testing
+    without waiting for the nightly run. Requires the admin token."""
+    body  = request.get_json(silent=True) or {}
+    token = body.get("token") or request.headers.get("X-Admin-Token", "")
+    admin = os.environ.get("ADMIN_TOKEN", "")
+    if not admin or not hmac.compare_digest(token, admin):
+        return jsonify({"error": "forbidden"}), 403
+    try:
+        check_and_fire_alerts()
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/alerts")
+def alerts_page():
+    """Serve the alerts management page (same SPA shell as watchlist)."""
     return send_from_directory(PUBLIC_DIR, "index.html")
 
 
