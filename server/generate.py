@@ -238,9 +238,17 @@ def save_final_cache(data: list, run_date: str):
               f"{len(base_rows)} already cached — that's a >50% drop. "
               f"Refusing to overwrite; merging onto the existing cache "
               f"instead so the site doesn't regress.")
+        today_str = datetime.date.today().isoformat()
         merged: dict = {r["ticker"]: r for r in base_rows}
+        for r in merged.values():
+            # Stamp all carried-over rows with today's date. They're being
+            # consciously re-published today, so last_updated should reflect
+            # that — otherwise api_stats reads an old last_updated from
+            # stocks[0] and the site shows "2d old" even after a successful
+            # (if partial) nightly run.
+            r["last_updated"] = today_str
         for r in data:
-            merged[r["ticker"]] = r
+            merged[r["ticker"]] = r  # fresh rows already have today's date
         rows = sorted(merged.values(), key=lambda x: x["upside_pct"], reverse=True)
         for i, r in enumerate(rows):
             r["rank"] = i + 1

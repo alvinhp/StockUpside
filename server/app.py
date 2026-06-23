@@ -2340,8 +2340,23 @@ def api_stats():
         sectors[sec]["avg_upside"] = round(
             sectors[sec]["avg_upside"] / sectors[sec]["count"], 1)
 
-    # Use the timestamp from the actual data, not today's date
-    last_updated = stocks[0].get("last_updated", datetime.date.today().isoformat())
+    # Use the DB cache row's actual write timestamp (ts column) as the
+    # authoritative "when was this data last published" date — not
+    # stocks[0]["last_updated"], which reflects when that individual ticker
+    # was originally fetched by generate.py. When the merge-protection path
+    # in save_final_cache() fires (partial run < 50% of universe), carried-
+    # over rows keep their original fetch date, so stocks[0] can show
+    # "2026-06-21" even though the cache was legitimately re-written today.
+    con = get_db()
+    cache_ts_row = con.execute(
+        "SELECT ts FROM cache ORDER BY ts DESC LIMIT 1"
+    ).fetchone()
+    con.close()
+
+    if cache_ts_row:
+        last_updated = datetime.date.fromtimestamp(cache_ts_row[0]).isoformat()
+    else:
+        last_updated = stocks[0].get("last_updated", datetime.date.today().isoformat())
 
     # Surface how stale the data is
     try:
