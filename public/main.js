@@ -857,6 +857,21 @@ function controls(sectors, count) {
         </select>
       </div>
       <div class="res-cnt">Showing <strong id="cnt">${count}</strong> stocks</div>
+      ${tier === "pro" ? `
+      <div class="flt-g export-g">
+        <label class="flt-lbl">EXPORT</label>
+        <div class="export-row">
+          <select class="flt-sel export-scope-sel" id="export-scope">
+            <option value="all">All stocks</option>
+            <option value="watchlist">My watchlist</option>
+          </select>
+          <button class="btn-export" id="btn-export" title="Download CSV">↓ CSV</button>
+        </div>
+      </div>` : `
+      <div class="flt-g export-g">
+        <label class="flt-lbl">EXPORT</label>
+        <button class="btn-export btn-export-locked" id="btn-export-locked" title="Pro feature">🔒 CSV</button>
+      </div>`}
     </div>
   </div>`;
 }
@@ -1637,6 +1652,50 @@ function bindGlobals() {
     const fMom = document.getElementById("flt-momentum");
     if (fMom)
         fMom.onchange = () => { momentumFilter = fMom.value; currentPage = 1; applyFilters(); renderRows(); };
+    // CSV export (Pro only)
+    const btnExport = document.getElementById("btn-export");
+    if (btnExport) {
+        btnExport.onclick = async () => {
+            const scopeEl = document.getElementById("export-scope");
+            const scope = scopeEl?.value || "all";
+            const label = scope === "watchlist" ? "watchlist" : "all stocks";
+            btnExport.textContent = "⋯ Preparing…";
+            btnExport.disabled = true;
+            try {
+                const url = `${API}/export/csv?token=${encodeURIComponent(proToken)}&scope=${scope}`;
+                const r = await fetch(url);
+                if (!r.ok) {
+                    const err = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+                    throw new Error(err.error || `HTTP ${r.status}`);
+                }
+                // Stream the response into a blob and trigger a browser download —
+                // no temp files, no new tab, works in all modern browsers.
+                const blob = await r.blob();
+                const filename = r.headers.get("Content-Disposition")
+                    ?.match(/filename="?([^"]+)"?/)?.[1]
+                    || `stockupside-export-${new Date().toISOString().slice(0, 10)}.csv`;
+                const a = document.createElement("a");
+                a.href = URL.createObjectURL(blob);
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(a.href);
+                toast(`Downloaded ${label} as CSV`, "ok");
+            }
+            catch (e) {
+                toast("Export failed — " + String(e), "err");
+            }
+            finally {
+                btnExport.textContent = "↓ CSV";
+                btnExport.disabled = false;
+            }
+        };
+    }
+    // Locked export button (free tier) — nudge to upgrade
+    const btnExportLocked = document.getElementById("btn-export-locked");
+    if (btnExportLocked)
+        btnExportLocked.onclick = () => showPW();
     // Log Out button (Pro users)
     const btnLogout = document.getElementById("btn-logout");
     if (btnLogout)
