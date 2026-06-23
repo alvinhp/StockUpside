@@ -1494,3 +1494,52 @@ select, input { font-family: var(--font-sans); }
   .al-upside-col  { flex: 0 0 auto; margin-left: auto; }
   .al-actions-col { flex: 0 0 auto; }
 }
+
+/* ── CSV Export ───────────────────────────────────────────────────────────────── */
+.export-g { flex: 0 0 auto; }
+.export-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.export-scope-sel {
+  width: 120px;
+}
+.btn-export {
+  background: var(--accent);
+  color: #000;
+  border: none;
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .05em;
+  padding: 7px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity .15s, transform .1s;
+}
+.btn-export:hover:not(:disabled) { opacity: .85; }
+.btn-export:active:not(:disabled) { transform: scale(.97); }
+.btn-export:disabled { opacity: .5; cursor: default; }
+.btn-export-locked {
+  background: var(--bg2);
+  color: var(--text3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .05em;
+  padding: 7px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .15s, color .15s;
+}
+.btn-export-locked:hover { background: var(--bg3); color: var(--text2); }
+
+@media (max-width: 768px) {
+  .export-g { width: 100%; }
+  .export-row { width: 100%; }
+  .export-scope-sel { flex: 1; }
+}
