@@ -2207,7 +2207,13 @@ def api_export_csv():
                   or request.headers.get("Authorization", "").removeprefix("Bearer ").strip())
     email_addr = _resolve_token_email(token)
     if not email_addr:
-        return jsonify({"error": "Pro subscription required"}), 403
+        # If this looks like a browser navigating directly to the URL
+        # (rather than a fetch() call from the frontend), redirect to the
+        # site instead of returning a raw JSON 403 that looks like a bug.
+        accepts_html = "text/html" in request.headers.get("Accept", "")
+        if accepts_html:
+            return redirect("/?export=login", code=302)
+        return jsonify({"error": "Pro subscription required — pass ?token=YOUR_TOKEN"}), 403
 
     stocks = get_stocks_cached()
     if not stocks:

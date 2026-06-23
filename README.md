@@ -89,6 +89,9 @@ MIT — use commercially, modify freely.
 - Improved SEO
 - Similar stocks in /stocks/TICKER page
 - Sector specific landing pages
+- Alerts
+- CSV Export
+- API access tier: Charge $99/mo to target quant hobbyist and small funds (needs more testing)
 
 ## TO DO LIST
 - Post more on Reddit (User 9:1 rule)
@@ -98,8 +101,6 @@ MIT — use commercially, modify freely.
 ## TO DO LIST (After $100 - $1k MRR)
 - Affiliate revenue
 - Historical tracking: "Was this analyst right?"
-- CSV/Excel export
-- API access tier: Charge $99/mo to target quant hobbyist and small funds
 - Email alerts
 - Sector rotation signals
 - Plain English summaries on the stock pages
