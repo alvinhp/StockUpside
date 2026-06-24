@@ -114,6 +114,20 @@ async function load() {
                 // Non-fatal — watchlist star state just won't be pre-populated
             }
         }
+        else {
+            // Free users can also have a watchlist — load it using their email
+            const freeEmail = localStorage.getItem("su_free_email") || "";
+            if (freeEmail) {
+                try {
+                    const wr = await fetch(`${API}/watchlist?free_email=${encodeURIComponent(freeEmail)}`);
+                    const wd = await wr.json();
+                    watchlist = new Set(wd.tickers || []);
+                }
+                catch {
+                    // Non-fatal
+                }
+            }
+        }
         if (isWatchlistPage) {
             applyFilters();
             setLoader(false);
@@ -139,7 +153,13 @@ async function load() {
         document.getElementById("app").innerHTML = errScreen(String(e));
     }
 }
-async function toggleWatchlist(ticker, starEl) {
+async function toggleWatchlist(ticker, starEl, isLocked = false) {
+    if (isLocked) {
+        // Free user clicking a locked stock's star — nudge to upgrade
+        toast("Upgrade to Pro to watchlist any stock", "err");
+        showPW();
+        return;
+    }
     const adding = !watchlist.has(ticker);
     // Optimistic UI update
     if (adding) {
@@ -154,22 +174,41 @@ async function toggleWatchlist(ticker, starEl) {
         starEl.classList.remove("wl-active");
         starEl.title = "Add to watchlist";
     }
+    // Build auth payload: Pro token if available, otherwise free email
+    const freeEmail = localStorage.getItem("su_free_email") || "";
+    const authBody = proToken ? { token: proToken } : { free_email: freeEmail };
+    if (!proToken && !freeEmail) {
+        // No identity at all — ask them to sign up for the free list first
+        if (adding) {
+            watchlist.delete(ticker);
+            starEl.textContent = "☆";
+            starEl.classList.remove("wl-active");
+        }
+        else {
+            watchlist.add(ticker);
+            starEl.textContent = "★";
+            starEl.classList.add("wl-active");
+        }
+        toast("Enter your email in the bar below to save your watchlist", "err");
+        return;
+    }
     try {
         const r = await fetch(`${API}/watchlist`, {
             method: adding ? "POST" : "DELETE",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token: proToken, ticker }),
+            body: JSON.stringify({ ...authBody, ticker }),
         });
-        if (!r.ok)
-            throw new Error(await r.text());
+        const d = await r.json();
+        if (!r.ok) {
+            throw new Error(d.error || `HTTP ${r.status}`);
+        }
         toast(adding ? `${ticker} added to your watchlist` : `${ticker} removed from your watchlist`, "ok");
         if (isWatchlistPage && !adding) {
-            // Removing from the dedicated watchlist page — drop the row immediately
             applyFilters();
             renderWatchlistRows();
         }
     }
-    catch {
+    catch (e) {
         // Revert on failure
         if (adding) {
             watchlist.delete(ticker);
@@ -183,7 +222,13 @@ async function toggleWatchlist(ticker, starEl) {
             starEl.classList.add("wl-active");
             starEl.title = "Remove from watchlist";
         }
-        toast("Couldn't update watchlist — please try again.", "err");
+        const msg = String(e);
+        if (msg.includes("Pro")) {
+            toast(msg, "err");
+            showPW();
+        }
+        else
+            toast("Couldn't update watchlist — please try again.", "err");
     }
 }
 async function doSubscribe(email, plan = "monthly") {
@@ -582,20 +627,23 @@ function bindAlerts() {
     }
 }
 function watchlistTable(items) {
-    if (tier !== "pro") {
+    const freeEmail = localStorage.getItem("su_free_email") || "";
+    const hasIdentity = tier === "pro" || !!freeEmail;
+    if (!hasIdentity) {
         return `<div class="wl-locked-wrap">
-      <div class="wl-locked-icon">🔒</div>
-      <h2>Watchlists are a Pro feature</h2>
-      <p>Track unlimited stocks across the whole market — upgrade to Pro to
-         build your own watchlist and see it here.</p>
-      <button class="btn-pro" id="wl-upgrade-btn">Unlock Pro →</button>
+      <div class="wl-locked-icon">☆</div>
+      <h2>Save stocks to your watchlist</h2>
+      <p>Sign up for the free weekly digest to track up to 20 analyst-ranked stocks.
+         Upgrade to Pro to watchlist the entire 4,000+ stock universe.</p>
+      <a href="/" class="btn-pro" style="display:inline-block;text-decoration:none">Browse Stocks →</a>
     </div>`;
     }
     if (items.length === 0) {
         return `<div class="wl-empty-wrap">
       <div class="wl-empty-icon">☆</div>
       <h2>Your watchlist is empty</h2>
-      <p>Click the ☆ next to any stock on <a href="/stocks">All Stocks</a> to add it here.</p>
+      <p>Click the ☆ next to any stock on <a href="/">the main list</a> to add it here.
+        ${tier !== "pro" ? `<br><span style="color:var(--text3);font-size:12px">Free accounts can watchlist the top 20 stocks. <a href="#" onclick="showPW();return false">Upgrade to Pro</a> for unlimited access.</span>` : ""}</p>
     </div>`;
     }
     const heads = COLS.map(c => {
@@ -604,7 +652,8 @@ function watchlistTable(items) {
         return `<th class="th${c.sort ? " sort" : ""}${act ? " act" : ""}"
                 data-k="${c.k}"${titleAttr}>${c.l}${arrow}</th>`;
     }).join("");
-    return `<table class="tbl">
+    return `${tier !== "pro" ? `<div class="wl-free-note">Free tier: showing your watchlisted stocks from the top 20. <a href="#" onclick="showPW();return false">Upgrade to Pro</a> to watchlist any stock.</div>` : ""}
+  <table class="tbl">
     <thead><tr>${heads}</tr></thead>
     <tbody id="tbody">${items.map(s => row(s)).join("")}</tbody>
   </table>`;
@@ -616,7 +665,7 @@ function renderWatchlistPage() {
     <div class="wl-wrap">
       <div class="wl-title-row">
         <h1>★ My Watchlist</h1>
-        ${tier === "pro" ? `<div class="wl-count">${items.length} stock${items.length === 1 ? "" : "s"} tracked</div>` : ""}
+        ${items.length > 0 ? `<div class="wl-count">${items.length} stock${items.length === 1 ? "" : "s"} tracked</div>` : ""}
       </div>
       <div class="wl-tabs">
         <span class="wl-tab wl-tab-active">★ Watchlist</span>
@@ -721,7 +770,7 @@ function header() {
 }
 function banner() {
     return `<div class="banner">
-    <div class="banner-l">🔒 <strong>Viewing 10 of 1000+ stocks.</strong>
+    <div class="banner-l">🔒 <strong>Viewing 20 of 4000+ stocks.</strong>
       Upgrade to reveal all analyst picks ranked by upside.</div>
     <button class="btn-upg" id="btn-banner">Upgrade — $29/mo →</button>
   </div>`;
@@ -970,7 +1019,7 @@ function row(s) {
         return `
     <tr class="tr-locked" data-locked="1">
       <td class="td-rank">${s.rank}</td>
-      <td class="td-watch"><span class="wl-star wl-dim" title="Unlock Pro to use watchlists">☆</span></td>
+      <td class="td-watch"><span class="wl-star wl-dim wl-locked-star" title="Upgrade to Pro to watchlist any stock" onclick="event.stopPropagation();showPW()">☆</span></td>
       <td><span class="tk-lock">???</span></td>
       <td><span class="nm-lock">Unlock Pro to reveal</span></td>
       <td><span class="sec-dim">${s.sector || "—"}</span></td>
@@ -1498,13 +1547,10 @@ function bindRows() {
             e.stopPropagation();
             const ticker = star.dataset.watchTicker;
             if (!ticker)
-                return; // locked row's star has no ticker
-            if (tier !== "pro") {
-                toast("Watchlists are a Pro feature — upgrade to track your own stocks.", "err");
-                showPW();
                 return;
-            }
-            toggleWatchlist(ticker, star);
+            // Free users can watchlist unlocked stocks; toggleWatchlist handles
+            // auth (free_email vs proToken) and rejects locked tickers with a nudge.
+            toggleWatchlist(ticker, star, false);
         };
     });
     document.querySelectorAll(".tr-stock").forEach(tr => {
