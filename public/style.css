@@ -1543,3 +1543,19 @@ select, input { font-family: var(--font-sans); }
   .export-row { width: 100%; }
   .export-scope-sel { flex: 1; }
 }
+
+/* ── Free-tier watchlist note ─────────────────────────────────────────────────── */
+.wl-free-note {
+  font-size: 12px;
+  color: var(--text2);
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 14px;
+  margin-bottom: 12px;
+  font-family: var(--font-mono);
+}
+.wl-free-note a { color: var(--accent); text-decoration: none; }
+.wl-free-note a:hover { text-decoration: underline; }
+.wl-locked-star { cursor: pointer; }
+.wl-locked-star:hover { color: var(--text2); }

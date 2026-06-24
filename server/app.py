@@ -2055,7 +2055,7 @@ def digest_email_html(stocks: list, email_addr: str, prefs: dict | None = None) 
     picks = apply_email_filters(stocks, prefs, limit=10) if prefs else None
     fell_back = False
     if not picks:
-        picks     = [s for s in stocks if not s.get("locked")][:10]
+        picks     = [s for s in stocks if not s.get("locked")][:20]
         fell_back = is_custom
 
     rows_html = ""
@@ -2292,7 +2292,7 @@ def api_stocks():
 
     # Free tier: apply default quality filters (min market cap + min
     # analyst coverage) so high-risk, thinly-covered nano/micro caps don't
-    # dominate the free top-10. Original global `rank` is preserved so
+    # dominate the free top-20. Original global `rank` is preserved so
     # free users see where these stocks actually rank overall.
     min_cap      = FREE_DEFAULT_MIN_MARKET_CAP
     min_analysts = FREE_DEFAULT_MIN_ANALYSTS
@@ -2303,7 +2303,7 @@ def api_stocks():
         and (s.get("analyst_count") or 0) >= min_analysts
     ]
 
-    free_set   = eligible[:10]
+    free_set   = eligible[:20]
     free_idx   = {s["ticker"] for s in free_set}
     remainder  = [s for s in stocks if s["ticker"] not in free_idx]
 
@@ -3272,28 +3272,51 @@ def api_email_prefs():
 @app.route("/api/watchlist", methods=["GET", "POST", "DELETE", "OPTIONS"])
 @limiter.limit("120 per hour")
 def api_watchlist():
-    """Pro-only watchlist of tickers.
+    """Watchlist endpoint — open to both free and Pro users.
 
-    Auth: Pro access token via 'token' query/body param or
-    'Authorization: Bearer <token>' header — same pattern as
-    /api/email-prefs. Email is resolved server-side, never trusted
-    from the client.
+    Free users: pass `free_email` (their subscribed email from localStorage).
+      - Can watchlist any ticker in the free tier (top 20 unlocked stocks).
+      - Attempting to add a locked ticker returns 403.
+    Pro users: pass `token` as before.
+      - No ticker restrictions.
 
-    GET    -> list watchlisted tickers joined with current stock data
-    POST   {ticker} -> add a ticker
-    DELETE {ticker} -> remove a ticker
+    Auth resolution order:
+      1. Pro token (query param / body / Authorization header)
+      2. free_email param — validated as a known subscriber address
     """
     if request.method == "OPTIONS":
         return Response(status=200)
 
+    body  = request.get_json(silent=True) or {}
     token = (
         request.args.get("token")
-        or (request.get_json(silent=True) or {}).get("token")
+        or body.get("token")
         or request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
     )
+    free_email_param = (
+        request.args.get("free_email")
+        or body.get("free_email")
+        or ""
+    ).strip().lower()
+
     email_addr = _resolve_token_email(token)
-    if not email_addr:
-        return jsonify({"error": "Pro subscription required"}), 401
+    is_pro     = bool(email_addr)
+
+    if not is_pro:
+        # Validate the free_email is a known address (exists in subscribers
+        # or free_subscribers table) to prevent arbitrary email enumeration.
+        if not free_email_param or "@" not in free_email_param:
+            return jsonify({"error": "Authentication required"}), 401
+        con_check = get_db()
+        known = con_check.execute(
+            "SELECT 1 FROM subscribers WHERE LOWER(email)=? "
+            "UNION SELECT 1 FROM free_subscribers WHERE LOWER(email)=? LIMIT 1",
+            (free_email_param, free_email_param)
+        ).fetchone()
+        con_check.close()
+        if not known:
+            return jsonify({"error": "Authentication required"}), 401
+        email_addr = free_email_param
 
     con = get_db()
 
@@ -3305,21 +3328,39 @@ def api_watchlist():
         con.close()
         tickers = {r[0] for r in rows}
 
-        stocks = get_stocks_cached()
+        stocks    = get_stocks_cached()
         by_ticker = {s["ticker"]: s for s in stocks}
-        matched   = [by_ticker[t] for t in tickers if t in by_ticker]
-        missing   = sorted(tickers - by_ticker.keys())
 
+        if not is_pro:
+            # Free users only see their watchlisted stocks that are still
+            # in the unlocked set — if a stock drops out of the free top 20
+            # it becomes invisible on the watchlist page until they upgrade.
+            unlocked = {s["ticker"] for s in stocks if not s.get("locked")}
+            tickers  = tickers & unlocked
+
+        matched = [by_ticker[t] for t in tickers if t in by_ticker]
+        missing = sorted(tickers - by_ticker.keys())
         return jsonify({"stocks": matched, "tickers": sorted(tickers),
-                        "missing": missing, "total": len(tickers)})
+                        "missing": missing, "total": len(tickers),
+                        "is_pro": is_pro})
 
-    body   = request.get_json(force=True) or {}
     ticker = str(body.get("ticker", "")).strip().upper()
     if not ticker or not re.match(r"^[A-Z0-9.\-]{1,10}$", ticker):
         con.close()
         return jsonify({"error": "Invalid ticker"}), 400
 
     if request.method == "POST":
+        if not is_pro:
+            # Enforce free-tier restriction: only allow unlocked tickers.
+            stocks   = get_stocks_cached()
+            unlocked = {s["ticker"] for s in stocks if not s.get("locked")}
+            if ticker not in unlocked:
+                con.close()
+                return jsonify({
+                    "error": f"{ticker} is only available to Pro subscribers. "
+                             "Upgrade to add any stock to your watchlist."
+                }), 403
+
         con.execute(
             "INSERT OR IGNORE INTO watchlists (email, ticker, added_at) VALUES (?, ?, ?)",
             (email_addr, ticker, int(time.time()))
