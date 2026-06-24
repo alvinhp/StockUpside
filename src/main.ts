@@ -1209,7 +1209,7 @@ function paywallModal() {
       <div class="pw-head">
         <div class="pw-mark">▲</div>
         <h2>Unlock Full Access</h2>
-        <p>All analyst-ranked stocks, updated every day at midnight.</p>
+        <p>4,000+ analyst-ranked stocks, updated every day at midnight.</p>
       </div>
       <div class="plans">
         <div class="plan featured">
@@ -1217,7 +1217,7 @@ function paywallModal() {
           <div class="plan-name">Pro Monthly</div>
           <div class="plan-price">$29<span>/mo</span></div>
           <ul>
-            <li>✓ Full 3,500+ ranked list</li>
+            <li>✓ Full 4,000+ ranked list</li>
             <li>✓ Filter by sector, consensus, momentum, and more</li>
             <li>✓ Unlimited watchlist</li>
             <li>✓ Weekly stock digest based on filters</li>

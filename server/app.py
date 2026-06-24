@@ -6036,7 +6036,7 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
 
     <div id="stock-accuracy"></div>
   <div class="sp-cta">
-    <h3>See all {"{100}"} stocks ranked by analyst upside</h3>
+    <h3>See 4,000+ stocks ranked by analyst upside</h3>
     <p>StockUpside.io tracks analyst consensus price targets across thousands of US-listed stocks,
        updated every day. The full ranked list is available with a Pro subscription.</p>
     <a href="/" class="sp-cta-btn">View Full Rankings →</a>
@@ -6126,17 +6126,17 @@ def render_stocks_index(stocks: list) -> str:
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Top Stocks by Analyst Upside Potential — Full List | StockUpside.io</title>
-  <meta name="description" content="Complete list of stocks ranked by Wall Street analyst consensus price target upside. Updated daily. Includes analyst count, consensus rating, and price targets."/>
+  <title>4,000+ Stocks Ranked by Analyst Upside Potential | StockUpside.io</title>
+  <meta name="description" content="4,000+ stocks ranked by Wall Street analyst consensus price target upside. Updated daily. Includes analyst count, consensus rating, and price targets."/>
   <meta name="robots" content="index, follow"/>
   <link rel="canonical" href="https://stockupside.io/stocks"/>
   <meta property="og:type"        content="website"/>
-  <meta property="og:title"       content="Top Stocks by Analyst Upside | StockUpside.io"/>
-  <meta property="og:description" content="Complete list of stocks ranked by Wall Street analyst consensus price target upside. Updated daily."/>
+  <meta property="og:title"       content="4,000+ Stocks Ranked by Analyst Upside | StockUpside.io"/>
+  <meta property="og:description" content="4,000+ stocks ranked by Wall Street analyst consensus price target upside. Updated daily."/>
   <meta property="og:url"         content="https://stockupside.io/stocks"/>
   <meta property="og:image"       content="https://stockupside.io/og-image.png"/>
   <meta name="twitter:card"       content="summary_large_image"/>
-  <meta name="twitter:title"      content="Top Stocks by Analyst Upside | StockUpside.io"/>
+  <meta name="twitter:title"      content="4,000+ Stocks Ranked by Analyst Upside | StockUpside.io"/>
   <meta name="twitter:image"      content="https://stockupside.io/og-image.png"/>
   <link rel="stylesheet" href="/style.css"/>
 </head>

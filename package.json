@@ -1,7 +1,7 @@
 {
   "name": "stockupside-io",
   "version": "1.0.0",
-  "description": "Top 100 stocks by analyst upside potential — updated daily",
+  "description": "4,000+ stocks ranked by analyst upside potential. Updated daily.",
   "scripts": {
     "build": "tsc",
     "watch": "tsc --watch",
