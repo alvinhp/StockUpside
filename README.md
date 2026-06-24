@@ -92,6 +92,7 @@ MIT — use commercially, modify freely.
 - Alerts
 - CSV Export
 - API access tier: Charge $99/mo to target quant hobbyist and small funds (needs more testing)
+- Raised free stock cap from 10 to 20 stocks
 
 ## TO DO LIST
 - Post more on Reddit (User 9:1 rule)
