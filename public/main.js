@@ -1165,7 +1165,7 @@ function footer() {
     </nav>
     <div class="ftr-bottom">
       <div>© ${new Date().getFullYear()} StockUpside.io · Updated daily at midnight EST · <a href="/disclaimer" style="color:var(--text3)">Not financial advice</a></div>
-      <div class="ftr-r"><a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="/disclaimer">Disclaimer</a> · <a href="mailto:hello@stockupside.io">Contact</a></div>
+      <div class="ftr-r"><a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="/disclaimer">Disclaimer</a> · <a href="mailto:stockupside@gmail.com">Contact</a></div>
     </div>
   </footer>`;
 }

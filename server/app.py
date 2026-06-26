@@ -2662,7 +2662,7 @@ def _render_api_docs_page() -> str:
     <pre><code>curl -H "Authorization: Bearer su_live_YOUR_KEY" \\
   https://stockupside.io/api/v1/stocks</code></pre>
     <p>
-      Lost your key? Email <a href="mailto:stockupside@gmail.com">stockupside@gmail.com</a> from
+      Lost your key? Email <a href="mailto:hello@stockupside.io">hello@stockupside.io</a> from
       the address you subscribed with and we'll revoke the old one and issue a new one.
     </p>
 
@@ -2894,7 +2894,7 @@ def _render_api_key_reveal_page(api_key: str, email: str) -> str:
   <pre><code>curl -H "Authorization: Bearer {safe_key}" \\
   https://stockupside.io/api/v1/stocks?limit=10</code></pre>
   <p>Full documentation: <a href="/api/docs">stockupside.io/api/docs</a></p>
-  <p>Lost a key later? Email <a href="mailto:stockupside@gmail.com">stockupside@gmail.com</a> from
+  <p>Lost a key later? Email <a href="mailto:hello@stockupside.io">hello@stockupside.io</a> from
   the address you subscribed with and we'll revoke and reissue one.</p>
 </body></html>"""
 
@@ -4678,7 +4678,7 @@ def render_terms_page() -> str:
     the end of the current billing period; you will retain Pro access until then,
     and will not be charged again afterward.</li>
     <li>Fees are non-refundable except where required by law. If you believe you were
-    charged in error, contact <a href="mailto:stockupside@gmail.com">stockupside@gmail.com</a>
+    charged in error, contact <a href="mailto:hello@stockupside.io">hello@stockupside.io</a>
     and we will review the request.</li>
     <li>We reserve the right to change subscription pricing with reasonable advance
     notice. Price changes will not apply to a billing period that has already been
@@ -4724,7 +4724,7 @@ def render_terms_page() -> str:
 
   <h2>12. Contact</h2>
   <p>Questions about these Terms? Email us at
-  <a href="mailto:stockupside@gmail.com">stockupside@gmail.com</a>.</p>
+  <a href="mailto:hello@stockupside.io">hello@stockupside.io</a>.</p>
 
   <hr class="legal-divider"/>
   <p style="font-size:11px;color:var(--text3);font-family:var(--font-mono)">
@@ -4740,7 +4740,7 @@ def render_terms_page() -> str:
     <a href="/terms">Terms</a> ·
     <a href="/privacy">Privacy</a> ·
     <a href="/disclaimer">Disclaimer</a> ·
-    <a href="mailto:stockupside@gmail.com">Contact</a>
+    <a href="mailto:hello@stockupside.io">Contact</a>
   </div>
 </footer>
 </body>
@@ -4845,7 +4845,7 @@ def render_privacy_page() -> str:
   <p>If you join the free list, you will receive a weekly email containing the current
   top 10 stocks by analyst upside. You can unsubscribe at any time by clicking the
   unsubscribe link in any email, or by contacting us at
-  <a href="mailto:stockupside@gmail.com">stockupside@gmail.com</a>.</p>
+  <a href="mailto:hello@stockupside.io">hello@stockupside.io</a>.</p>
   <p>Pro subscribers may receive transactional emails (receipts, renewal notices,
   service updates). These are necessary for the service and cannot be opted out of
   while your subscription is active.</p>
@@ -4882,7 +4882,7 @@ def render_privacy_page() -> str:
     <li>Unsubscribe from all communications at any time.</li>
   </ul>
   <p>To exercise any of these rights, email
-  <a href="mailto:stockupside@gmail.com">stockupside@gmail.com</a> and we will respond
+  <a href="mailto:hello@stockupside.io">hello@stockupside.io</a> and we will respond
   within 5 business days.</p>
 
   <h2>8. Children's Privacy</h2>
@@ -4897,7 +4897,7 @@ def render_privacy_page() -> str:
 
   <h2>10. Contact</h2>
   <p>Questions about this policy? Email us at
-  <a href="mailto:stockupside@gmail.com">stockupside@gmail.com</a>.</p>
+  <a href="mailto:hello@stockupside.io">hello@stockupside.io</a>.</p>
 
   <hr class="legal-divider"/>
   <p style="font-size:11px;color:var(--text3);font-family:var(--font-mono)">
@@ -4912,7 +4912,7 @@ def render_privacy_page() -> str:
     <a href="/terms">Terms</a> ·
     <a href="/privacy">Privacy</a> ·
     <a href="/disclaimer">Disclaimer</a> ·
-    <a href="mailto:stockupside@gmail.com">Contact</a>
+    <a href="mailto:hello@stockupside.io">Contact</a>
   </div>
 </footer>
 </body>
@@ -5077,7 +5077,7 @@ def render_disclaimer_page() -> str:
     <a href="/terms">Terms</a> ·
     <a href="/privacy">Privacy</a> ·
     <a href="/disclaimer">Disclaimer</a> ·
-    <a href="mailto:stockupside@gmail.com">Contact</a>
+    <a href="mailto:hello@stockupside.io">Contact</a>
   </div>
 </footer>
 </body>
@@ -5231,7 +5231,122 @@ def api_firm_track_record_detail(firm):
     })
 
 
-@app.route("/api/stocks/<ticker>/calls")
+@app.route("/api/stocks/<ticker>/history")
+@limiter.limit("300 per hour")
+def api_stock_history(ticker: str):
+    """Return point-in-time snapshot data for a ticker at standard lookback
+    periods: 7, 30, 90, 180, and 365 days ago.
+
+    Each period returns the nearest available snapshot within a ±3-day
+    tolerance window (same logic as get_momentum). If no snapshot exists
+    within that window the period is omitted rather than returning stale
+    data with a misleading label.
+
+    Response shape:
+      { ticker, collection_start, today, periods: [
+          { label, days, date, rank, current_price, target_price,
+            upside_pct, consensus, analyst_count,
+            price_change_pct, upside_change, rank_change,
+            consensus_changed }
+        ]
+      }
+
+    price_change_pct / upside_change / rank_change are deltas vs today,
+    so the frontend can show "Price +12.3% since then" without a second
+    fetch. consensus_changed is True when that period's consensus differs
+    from today's.
+    """
+    ticker = ticker.upper()
+    stocks = get_stocks_cached()
+    today_stock = next((s for s in stocks if s["ticker"] == ticker), None)
+    if not today_stock:
+        return jsonify({"error": f"{ticker} not found"}), 404
+
+    con  = get_db()
+    today_str = datetime.date.today().isoformat()
+
+    # Earliest snapshot date — used by the frontend to show "data available
+    # since X" rather than empty period tabs that look like bugs.
+    first_row = con.execute(
+        "SELECT MIN(date) FROM snapshots WHERE ticker=?", (ticker,)
+    ).fetchone()
+    collection_start = first_row[0] if first_row and first_row[0] else today_str
+
+    PERIODS = [
+        (7,   "7 days ago"),
+        (30,  "30 days ago"),
+        (90,  "90 days ago"),
+        (180, "6 months ago"),
+        (365, "1 year ago"),
+    ]
+    TOLERANCE_DAYS = 4   # accept snapshots within ±4 days of the target date
+
+    periods_out = []
+    for days, label in PERIODS:
+        target_date = (datetime.date.today() - datetime.timedelta(days=days)).isoformat()
+        earliest    = (datetime.date.today() - datetime.timedelta(days=days + TOLERANCE_DAYS)).isoformat()
+        latest      = (datetime.date.today() - datetime.timedelta(days=days - TOLERANCE_DAYS)).isoformat()
+
+        row = con.execute("""
+            SELECT date, rank, current_price, target_price, upside_pct,
+                   consensus, analyst_count
+            FROM snapshots
+            WHERE ticker=? AND date BETWEEN ? AND ?
+            ORDER BY ABS(julianday(date) - julianday(?)) ASC
+            LIMIT 1
+        """, (ticker, earliest, latest, target_date)).fetchone()
+
+        if not row:
+            continue
+
+        snap_date, rank, price, target, upside, consensus, analyst_count = row
+
+        # Compute deltas vs today so the frontend can highlight changes
+        today_price  = today_stock["current_price"]
+        today_upside = today_stock["upside_pct"]
+        today_rank   = today_stock["rank"]
+        today_cons   = today_stock["consensus"]
+
+        price_change_pct = (
+            round((today_price - price) / price * 100, 1)
+            if price else None
+        )
+        upside_change = (
+            round(today_upside - upside, 1)
+            if upside is not None else None
+        )
+        # Rank: lower number = better. Positive rank_change means rank improved.
+        rank_change = (rank - today_rank) if rank and today_rank else None
+
+        periods_out.append({
+            "label":             label,
+            "days":              days,
+            "date":              snap_date,
+            "rank":              rank,
+            "current_price":     price,
+            "target_price":      target,
+            "upside_pct":        upside,
+            "consensus":         consensus,
+            "analyst_count":     analyst_count,
+            "price_change_pct":  price_change_pct,
+            "upside_change":     upside_change,
+            "rank_change":       rank_change,
+            "consensus_changed": consensus != today_cons,
+        })
+
+    con.close()
+    return jsonify({
+        "ticker":           ticker,
+        "today":            today_str,
+        "collection_start": collection_start,
+        "today_price":      today_stock["current_price"],
+        "today_target":     today_stock["target_price"],
+        "today_upside":     today_stock["upside_pct"],
+        "today_consensus":  today_stock["consensus"],
+        "today_analysts":   today_stock["analyst_count"],
+        "today_rank":       today_stock["rank"],
+        "periods":          periods_out,
+    })
 @limiter.limit("600 per hour")
 def api_stock_calls(ticker):
     """Recent analyst calls for a specific ticker, with each firm's
@@ -5847,6 +5962,27 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
                    text-decoration: none; transition: background .2s; }}
     .sp-cta-btn:hover {{ background: #e8912d; text-decoration: none; }}
     .sp-rank  {{ font-family: var(--font-mono); font-size: 12px; color: var(--text2); margin-bottom: 8px; }}
+    /* History tab */
+    .sp-hist-tabs {{ display:flex; gap:6px; flex-wrap:wrap; margin-bottom:20px; }}
+    .sp-hist-tab  {{ font-family:var(--font-mono); font-size:11px; font-weight:600;
+                     letter-spacing:.06em; padding:6px 14px; border-radius:4px;
+                     border:1px solid var(--border); background:var(--bg);
+                     color:var(--text2); cursor:pointer; transition:all .15s; }}
+    .sp-hist-tab:hover {{ color:var(--text); border-color:var(--text3); }}
+    .sp-hist-tab-active {{ background:var(--accent); color:#000 !important; border-color:var(--accent) !important; }}
+    .sp-hist-loading {{ font-size:12px; color:var(--text3); font-family:var(--font-mono); padding:16px 0; }}
+    .sp-hist-empty   {{ font-size:13px; color:var(--text2); padding:16px 0; line-height:1.6; }}
+    .sp-hist-date    {{ font-family:var(--font-mono); font-size:11px; color:var(--text3);
+                        margin-bottom:16px; }}
+    .sp-hist-grid    {{ display:grid; grid-template-columns:1fr 1px 1fr; gap:0 20px; }}
+    .sp-hist-col     {{ min-width:0; }}
+    .sp-hist-colhead {{ font-family:var(--font-mono); font-size:9px; color:var(--text3);
+                        letter-spacing:.12em; margin-bottom:10px; }}
+    .sp-hist-divider {{ background:var(--border); width:1px; margin:0; }}
+    @media(max-width:560px) {{
+      .sp-hist-grid {{ grid-template-columns:1fr; gap:16px 0; }}
+      .sp-hist-divider {{ display:none; }}
+    }}
   </style>
 </head>
 <body>
@@ -6074,6 +6210,127 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
   {_render_similar_stocks(similar)}
 
   {_render_analyst_calls(s["ticker"])}
+
+  <!-- Historical data tab — loaded client-side via /api/stocks/TICKER/history -->
+  <div class="sp-card" style="margin-bottom:24px" id="sp-history-wrap">
+    <div class="sp-card-title">HISTORICAL SNAPSHOT</div>
+    <p style="font-size:12px;color:var(--text3);margin-bottom:16px">
+      Point-in-time data from StockUpside's daily snapshots.
+      Tracks price, analyst target, upside %, consensus, and analyst count.
+    </p>
+    <div class="sp-hist-tabs" id="sp-hist-tabs">
+      <button class="sp-hist-tab" data-days="7">7 days</button>
+      <button class="sp-hist-tab" data-days="30">30 days</button>
+      <button class="sp-hist-tab" data-days="90">90 days</button>
+      <button class="sp-hist-tab" data-days="180">6 months</button>
+      <button class="sp-hist-tab" data-days="365">1 year</button>
+    </div>
+    <div id="sp-hist-body">
+      <div class="sp-hist-loading">Loading…</div>
+    </div>
+  </div>
+  <script>
+  (function() {{
+    const ticker = "{s["ticker"]}";
+    let histData = null;
+
+    function consensusColor(c) {{
+      if (!c) return "var(--text2)";
+      if (c === "Strong Buy") return "#00e676";
+      if (c === "Buy")        return "#69f0ae";
+      if (c === "Hold")       return "#ffd740";
+      return "#ff5252";
+    }}
+
+    function delta(val, suffix, invert) {{
+      if (val == null) return '<span style="color:var(--text3)">—</span>';
+      const pos = invert ? val < 0 : val > 0;
+      const cls = val === 0 ? "color:var(--text2)" : pos ? "color:#00e676" : "color:#ff5252";
+      const sign = val > 0 ? "+" : "";
+      return `<span style="${{cls}}">${{sign}}${{val}}${{suffix}}</span>`;
+    }}
+
+    function renderPeriod(p) {{
+      if (!p) return '<div class="sp-hist-empty">No snapshot available for this period yet.<br><span style="font-size:11px;color:var(--text3)">Data accumulates daily — check back as more snapshots are collected.</span></div>';
+
+      const priceSign = p.price_change_pct > 0 ? "+" : "";
+      const priceColor = p.price_change_pct > 0 ? "#00e676" : p.price_change_pct < 0 ? "#ff5252" : "var(--text2)";
+      const upsideSign = p.upside_change > 0 ? "+" : "";
+      const upsideColor = p.upside_change > 0 ? "#00e676" : p.upside_change < 0 ? "#ff5252" : "var(--text2)";
+      const rankSign = p.rank_change > 0 ? "+" : "";
+      const rankColor = p.rank_change > 0 ? "#00e676" : p.rank_change < 0 ? "#ff5252" : "var(--text2)";
+      const rankNote = p.rank_change > 0 ? "(rank improved)" : p.rank_change < 0 ? "(rank worsened)" : "";
+
+      return `
+        <div class="sp-hist-date">Snapshot date: <strong>${{p.date}}</strong></div>
+        <div class="sp-hist-grid">
+          <div class="sp-hist-col">
+            <div class="sp-hist-colhead">THEN</div>
+            <div class="sp-stat"><span class="sp-stat-l">Price</span><span class="sp-stat-v">${{p.current_price != null ? "$" + p.current_price : "—"}}</span></div>
+            <div class="sp-stat"><span class="sp-stat-l">Target</span><span class="sp-stat-v">${{p.target_price != null ? "$" + p.target_price : "—"}}</span></div>
+            <div class="sp-stat"><span class="sp-stat-l">Upside</span><span class="sp-stat-v">${{p.upside_pct != null ? (p.upside_pct >= 0 ? "+" : "") + p.upside_pct + "%" : "—"}}</span></div>
+            <div class="sp-stat"><span class="sp-stat-l">Consensus</span><span class="sp-stat-v" style="color:${{consensusColor(p.consensus)}}">${{p.consensus || "—"}}</span></div>
+            <div class="sp-stat"><span class="sp-stat-l">Analysts</span><span class="sp-stat-v">${{p.analyst_count != null ? p.analyst_count : "—"}}</span></div>
+            <div class="sp-stat"><span class="sp-stat-l">Rank</span><span class="sp-stat-v">#${{p.rank != null ? p.rank : "—"}}</span></div>
+          </div>
+          <div class="sp-hist-divider"></div>
+          <div class="sp-hist-col">
+            <div class="sp-hist-colhead">CHANGE SINCE THEN</div>
+            <div class="sp-stat"><span class="sp-stat-l">Price</span><span class="sp-stat-v" style="color:${{priceColor}}">${{p.price_change_pct != null ? priceSign + p.price_change_pct + "%" : "—"}}</span></div>
+            <div class="sp-stat"><span class="sp-stat-l">Target</span><span class="sp-stat-v" style="color:var(--text3)">not tracked</span></div>
+            <div class="sp-stat"><span class="sp-stat-l">Upside</span><span class="sp-stat-v" style="color:${{upsideColor}}">${{p.upside_change != null ? upsideSign + p.upside_change + "pp" : "—"}}</span></div>
+            <div class="sp-stat"><span class="sp-stat-l">Consensus</span><span class="sp-stat-v">${{p.consensus_changed ? '<span style="color:#ffd740">Changed</span>' : '<span style="color:var(--text3)">Unchanged</span>'}}</span></div>
+            <div class="sp-stat"><span class="sp-stat-l">Analysts</span><span class="sp-stat-v" style="color:var(--text3)">not tracked</span></div>
+            <div class="sp-stat"><span class="sp-stat-l">Rank</span><span class="sp-stat-v" style="color:${{rankColor}}">${{p.rank_change != null ? rankSign + p.rank_change + " " + rankNote : "—"}}</span></div>
+          </div>
+        </div>`;
+    }}
+
+    function selectTab(days) {{
+      document.querySelectorAll(".sp-hist-tab").forEach(t => {{
+        t.classList.toggle("sp-hist-tab-active", parseInt(t.dataset.days) === days);
+      }});
+      if (!histData) return;
+      const period = histData.periods.find(p => p.days === days);
+      document.getElementById("sp-hist-body").innerHTML = renderPeriod(period || null);
+    }}
+
+    async function load() {{
+      try {{
+        const r = await fetch("/api/stocks/" + ticker + "/history");
+        histData = await r.json();
+
+        if (histData.error) {{
+          document.getElementById("sp-hist-body").innerHTML =
+            '<div class="sp-hist-empty">Could not load historical data.</div>';
+          return;
+        }}
+
+        const firstAvail = histData.periods[0];
+        if (!firstAvail) {{
+          const since = histData.collection_start;
+          document.getElementById("sp-hist-body").innerHTML =
+            `<div class="sp-hist-empty">No snapshots yet for ${{ticker}}.<br><span style="font-size:11px;color:var(--text3)">Data collection started ${{since}}. Historical tabs will populate after 7+ days.</span></div>`;
+          // Hide tabs since there's nothing to show
+          document.getElementById("sp-hist-tabs").style.display = "none";
+          return;
+        }}
+
+        // Auto-select the shortest available period
+        selectTab(firstAvail.days);
+      }} catch(e) {{
+        document.getElementById("sp-hist-body").innerHTML =
+          '<div class="sp-hist-empty">Could not load historical data.</div>';
+      }}
+    }}
+
+    document.querySelectorAll(".sp-hist-tab").forEach(btn => {{
+      btn.addEventListener("click", () => selectTab(parseInt(btn.dataset.days)));
+    }});
+
+    load();
+  }})();
+  </script>
 
     <div id="stock-accuracy"></div>
   <div class="sp-cta">
