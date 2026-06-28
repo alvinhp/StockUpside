@@ -756,9 +756,9 @@ function header() {
 
 function banner() {
   return `<div class="banner">
-    <div class="banner-l">🔒 <strong>Viewing 10 of 1000+ stocks.</strong>
+    <div class="banner-l">🔒 <strong>Viewing 20 of 1000+ stocks.</strong>
       Upgrade to reveal all analyst picks ranked by upside.</div>
-    <button class="btn-upg" id="btn-banner">Upgrade — $29/mo →</button>
+    <button class="btn-upg" id="btn-banner">Upgrade - $29/mo →</button>
   </div>`;
 }
 
