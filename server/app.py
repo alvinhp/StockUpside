@@ -21,6 +21,17 @@ import csv
 import io
 import threading
 
+# Load .env file if present — makes env vars work regardless of how Flask
+# is launched (systemd, nohup, direct python3). Variables already set in
+# the process environment take precedence over .env (override=False), so
+# systemd Environment= directives still win.
+try:
+    from dotenv import load_dotenv
+    _env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+    load_dotenv(_env_path, override=False)
+except ImportError:
+    pass  # python-dotenv not installed — env vars must come from the process env
+
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PUBLIC_DIR = os.path.join(BASE_DIR, "public")
 DB_PATH    = os.path.join(BASE_DIR, "server", "cache.db")
