@@ -2196,6 +2196,11 @@ CSV_COLUMNS = [
     ("Avg Volume",       "avg_volume",      None),
     ("Momentum",         "momentum_trend",  None),
     ("Momentum Detail",  "momentum_detail", None),
+    ("Conviction Score", "conviction_score",    None),
+    ("Conv. Coverage",   "conviction_coverage",  None),
+    ("Conv. Clarity",    "conviction_clarity",   None),
+    ("Conv. Unanimity",  "conviction_unanimity", None),
+    ("Conv. Stability",  "conviction_tenure",    None),
     ("Last Updated",     "last_updated",    None),
 ]
 
@@ -5962,6 +5967,25 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
                    text-decoration: none; transition: background .2s; }}
     .sp-cta-btn:hover {{ background: #e8912d; text-decoration: none; }}
     .sp-rank  {{ font-family: var(--font-mono); font-size: 12px; color: var(--text2); margin-bottom: 8px; }}
+    /* Conviction score widget */
+    .sp-conv-wrap  {{ display:flex; gap:24px; align-items:flex-start; flex-wrap:wrap; margin-bottom:16px; }}
+    .sp-conv-hero  {{ text-align:center; min-width:80px; }}
+    .sp-conv-num   {{ font-family:var(--font-mono); font-size:48px; font-weight:700; line-height:1; }}
+    .sp-conv-label {{ font-family:var(--font-mono); font-size:11px; color:var(--text3); margin-top:4px; }}
+    .sp-conv-bars  {{ flex:1; min-width:200px; display:flex; flex-direction:column; gap:10px; }}
+    .sp-conv-row   {{ display:flex; align-items:center; gap:10px; }}
+    .sp-conv-name  {{ font-family:var(--font-mono); font-size:11px; color:var(--text2);
+                      width:140px; flex-shrink:0; }}
+    .sp-conv-bar-bg  {{ flex:1; height:6px; background:var(--bg); border-radius:3px;
+                        border:1px solid var(--border); overflow:hidden; }}
+    .sp-conv-bar-fill {{ height:100%; background:var(--accent); border-radius:3px;
+                         transition:width .4s ease; }}
+    .sp-conv-pts   {{ font-family:var(--font-mono); font-size:12px; color:var(--text);
+                      font-weight:600; width:40px; text-align:right; flex-shrink:0; }}
+    .sp-conv-max   {{ color:var(--text3); font-weight:400; }}
+    .sp-conv-note  {{ font-size:11px; color:var(--text3); font-style:italic;
+                      border-top:1px solid var(--border); padding-top:12px; margin:0; }}
+    @media(max-width:560px) {{ .sp-conv-wrap {{ flex-direction:column; gap:16px; }} }}
     /* History tab */
     .sp-hist-tabs {{ display:flex; gap:6px; flex-wrap:wrap; margin-bottom:20px; }}
     .sp-hist-tab  {{ font-family:var(--font-mono); font-size:11px; font-weight:600;
@@ -6333,6 +6357,52 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
   </script>
 
     <div id="stock-accuracy"></div>
+  <div class="sp-card" style="margin-bottom:24px">
+    <div class="sp-card-title">ANALYST CONVICTION SCORE</div>
+    <div class="sp-conv-wrap">
+      <div class="sp-conv-hero">
+        <div class="sp-conv-num" style="color:{
+          '#00e676' if s.get('conviction_score',0) >= 75 else
+          '#ffd740' if s.get('conviction_score',0) >= 50 else
+          '#ff9800' if s.get('conviction_score',0) >= 25 else '#ff5252'
+        }">{s.get("conviction_score", "—")}</div>
+        <div class="sp-conv-label">out of 100</div>
+      </div>
+      <div class="sp-conv-bars">
+        <div class="sp-conv-row">
+          <span class="sp-conv-name">Coverage depth</span>
+          <div class="sp-conv-bar-bg">
+            <div class="sp-conv-bar-fill" style="width:{round(s.get('conviction_coverage',0)/30*100)}%"></div>
+          </div>
+          <span class="sp-conv-pts">{s.get("conviction_coverage",0)}<span class="sp-conv-max">/30</span></span>
+        </div>
+        <div class="sp-conv-row">
+          <span class="sp-conv-name">Consensus clarity</span>
+          <div class="sp-conv-bar-bg">
+            <div class="sp-conv-bar-fill" style="width:{round(s.get('conviction_clarity',0)/30*100)}%"></div>
+          </div>
+          <span class="sp-conv-pts">{s.get("conviction_clarity",0)}<span class="sp-conv-max">/30</span></span>
+        </div>
+        <div class="sp-conv-row">
+          <span class="sp-conv-name">Vote unanimity</span>
+          <div class="sp-conv-bar-bg">
+            <div class="sp-conv-bar-fill" style="width:{round(s.get('conviction_unanimity',0)/25*100)}%"></div>
+          </div>
+          <span class="sp-conv-pts">{s.get("conviction_unanimity",0)}<span class="sp-conv-max">/25</span></span>
+        </div>
+        <div class="sp-conv-row">
+          <span class="sp-conv-name">Rating stability</span>
+          <div class="sp-conv-bar-bg">
+            <div class="sp-conv-bar-fill" style="width:{round(s.get('conviction_tenure',0)/15*100)}%"></div>
+          </div>
+          <span class="sp-conv-pts">{s.get("conviction_tenure",0)}<span class="sp-conv-max">/15</span></span>
+        </div>
+      </div>
+    </div>
+    <p class="sp-conv-note">Measures analyst agreement, not fundamental quality.
+      A high score means analysts broadly agree on this call —
+      not that the stock will go up.</p>
+  </div>
   <div class="sp-cta">
     <h3>See 4,000+ stocks ranked by analyst upside</h3>
     <p>StockUpside.io tracks analyst consensus price targets across thousands of US-listed stocks,

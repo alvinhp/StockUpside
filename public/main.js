@@ -770,7 +770,7 @@ function header() {
 }
 function banner() {
     return `<div class="banner">
-    <div class="banner-l">🔒 <strong>Viewing 20 of 4000+ stocks.</strong>
+    <div class="banner-l">🔒 <strong>Viewing 10 of 1000+ stocks.</strong>
       Upgrade to reveal all analyst picks ranked by upside.</div>
     <button class="btn-upg" id="btn-banner">Upgrade — $29/mo →</button>
   </div>`;
@@ -936,6 +936,7 @@ const COLS = [
     { k: "analyst_count", l: "ANALYSTS", sort: true },
     { k: "consensus", l: "CONSENSUS", sort: true },
     { k: "momentum_trend", l: "MOMENTUM ⓘ", sort: true, title: "Momentum tracks how analyst ratings and targets have changed over time. Builds up over 7–30 days of data collection." },
+    { k: "conviction_score", l: "CONVICTION ⓘ", sort: true, title: "Analyst Conviction Score (0–100): measures how much analyst agreement backs this call. Based on coverage depth, consensus tightness, vote unanimity, and rating stability. Higher = stronger analyst conviction. Not a buy/sell signal." },
     { k: "ytd_change", l: "YTD", sort: true },
 ];
 function table() {
@@ -1004,6 +1005,33 @@ function momentumBadge(s) {
     </span>
   </td>`;
 }
+function convictionBadge(s) {
+    const score = s.conviction_score ?? null;
+    if (score === null) {
+        return `<td><span class="conv-badge conv-na">—</span></td>`;
+    }
+    const cls = score >= 75 ? "conv-high"
+        : score >= 50 ? "conv-mid"
+            : score >= 25 ? "conv-low"
+                : "conv-vlow";
+    const label = score >= 75 ? "High"
+        : score >= 50 ? "Medium"
+            : score >= 25 ? "Low"
+                : "Very Low";
+    const tip = [
+        `Analyst Conviction: ${score}/100`,
+        `Coverage depth: ${s.conviction_coverage ?? 0}/30`,
+        `Consensus clarity: ${s.conviction_clarity ?? 0}/30`,
+        `Vote unanimity: ${s.conviction_unanimity ?? 0}/25`,
+        `Rating stability: ${s.conviction_tenure ?? 0}/15`,
+    ].join(" · ");
+    return `<td>
+    <span class="conv-badge ${cls}" title="${tip}">
+      <span class="conv-score">${score}</span>
+      <span class="conv-label">${label}</span>
+    </span>
+  </td>`;
+}
 function showLockedFeedback(tr) {
     tr.classList.add("tr-locked-active");
     setTimeout(() => tr.classList.remove("tr-locked-active"), 600);
@@ -1069,6 +1097,7 @@ function row(s) {
       <td class="td-an">${s.analyst_count}</td>
       <td><span class="con-badge" style="color:${cRating(s.consensus)};border-color:${cRating(s.consensus)}33">${s.consensus}</span></td>
       ${momentumBadge(s)}
+      ${convictionBadge(s)}
       <td class="${ytdCls}">${pct(s.ytd_change)}</td>
     </tr>
     <!-- Mobile card view (hidden on desktop) -->
@@ -1165,7 +1194,7 @@ function footer() {
     </nav>
     <div class="ftr-bottom">
       <div>© ${new Date().getFullYear()} StockUpside.io · Updated daily at midnight EST · <a href="/disclaimer" style="color:var(--text3)">Not financial advice</a></div>
-      <div class="ftr-r"><a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="/disclaimer">Disclaimer</a> · <a href="mailto:stockupside@gmail.com">Contact</a></div>
+      <div class="ftr-r"><a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="/disclaimer">Disclaimer</a> · <a href="mailto:hello@stockupside.io">Contact</a></div>
     </div>
   </footer>`;
 }
@@ -1266,6 +1295,7 @@ function paywallModal() {
             <li>✓ Filter by sector, consensus, momentum, and more</li>
             <li>✓ Unlimited watchlist</li>
             <li>✓ Weekly stock digest based on filters</li>
+            <li>✓ CSV Export</li>
             <li>✓ Priority support</li>
             <li>✓ Everything in free tier</li>
           </ul>

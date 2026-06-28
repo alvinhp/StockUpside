@@ -69,7 +69,36 @@ def _finite(value, default=0):
     except (TypeError, ValueError):
         return default
 
-def sanitize_row(row: dict) -> dict:
+def _calc_forward_pe(current_price: float, forward_eps) -> float:
+    """Compute forward P/E from the current price and forward EPS estimate
+    rather than using yfinance's cached `forwardPE` field directly.
+
+    Why: yfinance's `info["forwardPE"]` is pre-computed as
+    currentPrice / forwardEps at the time Yahoo last cached the quote —
+    which can be hours or days stale. Using our already-fetched
+    `current_price` (from the same API call) gives a more accurate ratio.
+
+    Suppression rules (matches Yahoo Finance's display behaviour):
+      - forwardEps is None, zero, or non-finite → return 0 (not shown)
+      - forwardEps is negative (company expected to lose money) → return 0
+        Yahoo Finance doesn't display forward P/E for loss-making companies
+        since a negative ratio is mathematically valid but practically
+        meaningless and confusing to most users.
+      - Result > 1000 or not finite → return 0 (nonsensical outlier)
+    """
+    if not current_price or current_price <= 0:
+        return 0
+    try:
+        eps = float(forward_eps)
+    except (TypeError, ValueError):
+        return 0
+    if not math.isfinite(eps) or eps <= 0:
+        # Negative EPS → suppress (loss-making co, forward PE meaningless)
+        return 0
+    ratio = current_price / eps
+    if not math.isfinite(ratio) or ratio <= 0 or ratio > 1000:
+        return 0
+    return round(ratio, 1)
     """Defense-in-depth: sweep every numeric value in a finished row and
     replace any NaN/Infinity with 0 before it can reach the cache. This
     catches future fields too, not just the ones explicitly cleaned with
@@ -985,7 +1014,7 @@ def fetch_ticker_row(ticker: str) -> dict | None:
         except Exception:
             pass
 
-        return sanitize_row(dict(
+        row = sanitize_row(dict(
             ticker=ticker,
             name=info.get("longName") or info.get("shortName") or ticker,
             sector=info.get("sector") or "Unknown",
@@ -1006,7 +1035,7 @@ def fetch_ticker_row(ticker: str) -> dict | None:
             avg_volume=_finite(info.get("averageVolume")),
             last_updated=datetime.date.today().isoformat(),
             eps=info.get("trailingEps"),
-            forward_pe=round(_finite(info.get("forwardPE")), 1),
+            forward_pe=_calc_forward_pe(current_price, info.get("forwardEps")),
             peg_ratio=round(_finite(info.get("pegRatio")), 2),
             dividend_yield=_normalize_yield(info.get("dividendYield")),
             revenue=info.get("totalRevenue"),
@@ -1016,9 +1045,148 @@ def fetch_ticker_row(ticker: str) -> dict | None:
             momentum_streak=momentum["streak_days"],
             momentum_history=momentum["history"],
         ))
+
+        # Conviction score computed after all fields are finalised so it
+        # can read analyst_count, current_price, high/low_target, votes,
+        # and momentum_streak from the same row dict.
+        conviction = analyst_conviction_score(row)
+        row.update({
+            "conviction_score":     conviction["score"],
+            "conviction_coverage":  conviction["coverage"],
+            "conviction_clarity":   conviction["clarity"],
+            "conviction_unanimity": conviction["unanimity"],
+            "conviction_tenure":    conviction["tenure"],
+        })
+        return row
+
     except Exception as e:
         print(f"  ⚠  Skipped {ticker} (parse error): {e}")
         return None
+
+# ── Analyst Conviction Score ───────────────────────────────────────────────────
+# A 0–100 score that measures how much conviction the analyst community
+# has in their call on a given stock. Composed of four sub-scores, each
+# independently interpretable and shown to the user as a breakdown.
+#
+# Crucially this is NOT a "buy/sell" signal or risk prediction — it
+# measures analyst agreement, not fundamental quality. A stock can have a
+# conviction score of 95 and still go down if analysts are collectively
+# wrong. We make this framing explicit in the UI copy.
+
+def _coverage_depth_score(analyst_count: int) -> int:
+    """0–30 pts. Logarithmic scaling so the marginal value of analyst #31
+    isn't equal to analyst #2. Curve calibrated so:
+      1  analyst → 3 pts  (nearly worthless as a signal)
+      5  analysts → 12 pts
+      10 analysts → 18 pts
+      20 analysts → 24 pts
+      30 analysts → 28 pts
+      50+ analysts → 30 pts (cap)
+    """
+    import math as _math
+    if not analyst_count or analyst_count < 1:
+        return 0
+    # log2(count+1) / log2(51) * 30, capped at 30
+    raw = _math.log2(analyst_count + 1) / _math.log2(51) * 30
+    return min(30, round(raw))
+
+
+def _consensus_clarity_score(current_price: float, high_target: float,
+                              low_target: float) -> int:
+    """0–30 pts. Measures how tightly analysts agree on where the price
+    is going. Uses the bull/bear spread as a fraction of current price —
+    a tighter spread means analysts are in closer agreement.
+
+    Spread % = (high_target - low_target) / current_price * 100
+      <20%  spread → 30 pts  (analysts very tightly aligned)
+      40%   spread → 22 pts
+      80%   spread → 12 pts
+      150%+ spread →  0 pts  (analysts fundamentally disagree)
+    """
+    if not current_price or current_price <= 0:
+        return 0
+    if not high_target or not low_target or high_target <= low_target:
+        return 8   # neutral when we can't compute spread
+    spread_pct = (high_target - low_target) / current_price * 100
+    # Linear decay from 30pts at 0% spread to 0pts at 150% spread
+    raw = max(0, 30 - (spread_pct / 150 * 30))
+    return round(raw)
+
+
+def _vote_unanimity_score(strong_buy: int, buy: int,
+                           hold: int, sell: int) -> int:
+    """0–25 pts. What fraction of analysts rate this stock Buy or better.
+    The distribution shape matters: 10 Strong Buys + 0 else is more
+    convincing than 10 Strong Buys + 10 Holds.
+
+      100% bull → 25 pts
+       80% bull → 20 pts
+       60% bull → 12 pts
+       40% bull →  5 pts
+       <25% bull → 0 pts
+    """
+    total = strong_buy + buy + hold + sell
+    if not total:
+        return 0
+    bull_frac = (strong_buy + buy) / total
+    if bull_frac >= 1.0:  return 25
+    if bull_frac >= 0.8:  return 20
+    if bull_frac >= 0.6:  return 12
+    if bull_frac >= 0.4:  return  5
+    return 0
+
+
+def _tenure_score(momentum_streak_days: int) -> int:
+    """0–15 pts. How long has the consensus been stable/improving.
+    Uses the momentum_streak field already computed by get_momentum().
+
+      streak >= 90 days → 15 pts
+      streak >= 30 days → 10 pts
+      streak >= 7  days →  5 pts
+      streak == 0       →  2 pts  (too early to know / recently changed)
+    """
+    if momentum_streak_days >= 90: return 15
+    if momentum_streak_days >= 30: return 10
+    if momentum_streak_days >= 7:  return  5
+    return 2
+
+
+def analyst_conviction_score(stock: dict) -> dict:
+    """Compute the full Analyst Conviction Score and return both the
+    total (0–100) and the four component sub-scores so the UI can
+    show a breakdown rather than a black-box number.
+
+    Returns:
+      {
+        "score":     int,   # 0–100 total
+        "coverage":  int,   # 0–30
+        "clarity":   int,   # 0–30
+        "unanimity": int,   # 0–25
+        "tenure":    int,   # 0–15
+      }
+    """
+    coverage  = _coverage_depth_score(stock.get("analyst_count", 0))
+    clarity   = _consensus_clarity_score(
+        stock.get("current_price", 0),
+        stock.get("high_target",   0),
+        stock.get("low_target",    0),
+    )
+    unanimity = _vote_unanimity_score(
+        stock.get("strong_buy", 0),
+        stock.get("buy",        0),
+        stock.get("hold",       0),
+        stock.get("sell",       0),
+    )
+    tenure    = _tenure_score(stock.get("momentum_streak", 0))
+    total     = coverage + clarity + unanimity + tenure
+    return {
+        "score":     min(100, total),
+        "coverage":  coverage,
+        "clarity":   clarity,
+        "unanimity": unanimity,
+        "tenure":    tenure,
+    }
+
 
 # ── Main generation ──────────────────────────────────────────────
 def generate_stocks(run_date: str) -> list:

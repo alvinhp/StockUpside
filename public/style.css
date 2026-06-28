@@ -1559,3 +1559,24 @@ select, input { font-family: var(--font-sans); }
 .wl-free-note a:hover { text-decoration: underline; }
 .wl-locked-star { cursor: pointer; }
 .wl-locked-star:hover { color: var(--text2); }
+
+/* ── Analyst Conviction Score ─────────────────────────────────────────────────── */
+.conv-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  white-space: nowrap;
+  cursor: default;
+}
+.conv-score { font-size: 13px; font-weight: 700; }
+.conv-label { font-size: 10px; letter-spacing: .04em; }
+.conv-high  { color: #00e676; border-color: rgba(0,230,118,.25); background: rgba(0,230,118,.07); }
+.conv-mid   { color: #ffd740; border-color: rgba(255,215,64,.25); background: rgba(255,215,64,.07); }
+.conv-low   { color: #ff9800; border-color: rgba(255,152,0,.25);  background: rgba(255,152,0,.07); }
+.conv-vlow  { color: #ff5252; border-color: rgba(255,82,82,.25);  background: rgba(255,82,82,.07); }
+.conv-na    { color: var(--text3); border-color: var(--border); }
