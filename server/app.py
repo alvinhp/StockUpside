@@ -977,6 +977,18 @@ def get_stocks_cached() -> list:
     if not data:
         return []
 
+    # 6. Backfill conviction scores for any rows that were written before
+    #    the conviction scoring feature was added, or carried over from an
+    #    older cache entry via the merge-protection path in save_final_cache.
+    #    This ensures scores appear immediately without waiting for a full
+    #    clean re-run of generate.py.
+    needs_conviction = any("conviction_score" not in s for s in data)
+    if needs_conviction:
+        for s in data:
+            if "conviction_score" not in s:
+                conv = _conviction_score_from_row(s)
+                s.update(conv)
+
     # Warm the in-memory cache using the data's actual date, not today.
     # This ensures tomorrow's request re-checks the DB for a fresh row
     # rather than serving this stale data indefinitely.
@@ -987,6 +999,53 @@ def get_stocks_cached() -> list:
         _cache["checked_at"] = now
 
     return data
+
+def _conviction_score_from_row(s: dict) -> dict:
+    """Compute conviction sub-scores from a stock dict.
+    Mirrors the logic in generate.py's analyst_conviction_score() so
+    app.py can backfill missing scores at serve time without importing
+    from generate.py."""
+    analyst_count = s.get("analyst_count") or 0
+    current_price = s.get("current_price") or 0
+    high_target   = s.get("high_target") or 0
+    low_target    = s.get("low_target") or 0
+    strong_buy    = s.get("strong_buy") or 0
+    buy           = s.get("buy") or 0
+    hold          = s.get("hold") or 0
+    sell          = s.get("sell") or 0
+    streak        = s.get("momentum_streak") or 0
+
+    # Coverage depth (0–30): logarithmic
+    import math as _math
+    coverage = min(30, round(_math.log2(analyst_count + 1) / _math.log2(51) * 30)) if analyst_count >= 1 else 0
+
+    # Consensus clarity (0–30): bull/bear spread vs price
+    if current_price > 0 and high_target > low_target > 0:
+        spread_pct = (high_target - low_target) / current_price * 100
+        clarity = round(max(0, 30 - (spread_pct / 150 * 30)))
+    else:
+        clarity = 8
+
+    # Vote unanimity (0–25)
+    total = strong_buy + buy + hold + sell
+    if total:
+        bull = (strong_buy + buy) / total
+        unanimity = 25 if bull >= 1.0 else 20 if bull >= 0.8 else 12 if bull >= 0.6 else 5 if bull >= 0.4 else 0
+    else:
+        unanimity = 0
+
+    # Tenure (0–15)
+    tenure = 15 if streak >= 90 else 10 if streak >= 30 else 5 if streak >= 7 else 2
+
+    score = min(100, coverage + clarity + unanimity + tenure)
+    return {
+        "conviction_score":     score,
+        "conviction_coverage":  coverage,
+        "conviction_clarity":   clarity,
+        "conviction_unanimity": unanimity,
+        "conviction_tenure":    tenure,
+    }
+
 
 def get_latest_cache_ts(date_str: str) -> int | None:
     """Cheap check: return the `ts` of the cache row for `date_str`,
@@ -2370,7 +2429,14 @@ def api_stats():
     con.close()
 
     if cache_ts_row:
-        last_updated = datetime.date.fromtimestamp(cache_ts_row[0]).isoformat()
+        # Use UTC date to match datetime.date.today() which is also UTC-agnostic.
+        # fromtimestamp() uses local server timezone which can cause off-by-one
+        # errors if the server is UTC and the cache was written just before/after
+        # midnight — utcfromtimestamp().date() is consistent regardless of the
+        # server's local timezone setting.
+        last_updated = datetime.datetime.fromtimestamp(
+            cache_ts_row[0], tz=datetime.timezone.utc
+        ).date().isoformat()
     else:
         last_updated = stocks[0].get("last_updated", datetime.date.today().isoformat())
 
@@ -3893,7 +3959,8 @@ def sitemap_xml():
         f"{body}"
         "</urlset>"
     )
-    return Response(xml, mimetype="application/xml")
+    return Response(xml, mimetype="application/xml",
+                    headers={"Content-Type": "application/xml; charset=utf-8"})
 
 
 @app.route("/robots.txt")
