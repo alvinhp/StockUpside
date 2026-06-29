@@ -744,14 +744,26 @@ function renderAll() {
 }
 function header() {
     return `<header class="hdr">
-    <div class="hdr-l">
-      <div class="brand">
-        <span class="brand-mark">▲</span>
-        <div><div class="brand-name">STOCKUPSIDE<span class="brand-io">.IO</span></div>
-          <div class="brand-tag">Analyst Price Target Intelligence</div></div>
+    <div class="hdr-top">
+      <div class="hdr-l">
+        <div class="brand">
+          <span class="brand-mark">▲</span>
+          <div><div class="brand-name">STOCKUPSIDE<span class="brand-io">.IO</span></div>
+            <div class="brand-tag">Analyst Price Target Intelligence</div></div>
+        </div>
+      </div>
+      <div class="hdr-r">
+        <div class="live-chip"><span class="live-dot"></span>LIVE</div>
+        <div class="refresh-chip">
+          <span class="rc-lbl">UPDATES IN</span>
+          <span id="cd" class="cd">--:--:--</span>
+        </div>
+        ${tier === "pro"
+        ? `<button class="btn-emailprefs" id="btn-emailprefs">✉ Digest Settings</button><div class="pro-chip">✦ PRO</div><button class="btn-login" id="btn-logout">Log Out</button>`
+        : `<button class="btn-login" id="btn-login">Log In</button><button class="btn-pro" id="btn-paywall">Unlock Pro →</button>`}
       </div>
     </div>
-    <div class="hdr-r">
+    <nav class="hdr-nav">
       <a href="/changes" class="hdr-link">Rating Changes</a>
       <a href="/accuracy" class="hdr-link">Accuracy</a>
       <a href="/analyst-track-record" class="hdr-link">Track Record</a>
@@ -761,15 +773,7 @@ function header() {
       <a href="/blog" class="hdr-link">Blog</a>
       <a href="/watchlist" class="hdr-link">My Watchlist</a>
       <a href="/alerts" class="hdr-link">🔔 Alerts</a>
-      <div class="live-chip"><span class="live-dot"></span>LIVE</div>
-      <div class="refresh-chip">
-        <span class="rc-lbl">UPDATES IN</span>
-        <span id="cd" class="cd">--:--:--</span>
-      </div>
-      ${tier === "pro"
-        ? `<button class="btn-emailprefs" id="btn-emailprefs">✉ Digest Settings</button><div class="pro-chip">✦ PRO</div><button class="btn-login" id="btn-logout">Log Out</button>`
-        : `<button class="btn-login" id="btn-login">Log In</button><button class="btn-pro" id="btn-paywall">Unlock Pro →</button>`}
-    </div>
+    </nav>
   </header>`;
 }
 function banner() {
@@ -1185,7 +1189,6 @@ function mobileNavTabs() {
     <a href="/changes" class="mob-tab">Rating Changes</a>
     <a href="/accuracy" class="mob-tab">Accuracy</a>
     <a href="/analyst-track-record" class="mob-tab">Track Record</a>
-    <a href="/firm-track-record" class="mob-tab">Firm Rankings</a>
     <a href="/stocks" class="mob-tab">All Stocks</a>
     <a href="/sectors" class="mob-tab">Sectors</a>
     <a href="/blog" class="mob-tab">Blog</a>
@@ -1199,7 +1202,6 @@ function footer() {
       <a href="/changes" class="ftr-nav-link">Rating Changes</a>
       <a href="/accuracy" class="ftr-nav-link">Accuracy</a>
       <a href="/analyst-track-record" class="ftr-nav-link">Track Record</a>
-      <a href="/firm-track-record" class="ftr-nav-link">Firm Rankings</a>
       <a href="/stocks"   class="ftr-nav-link">All Stocks</a>
       <a href="/sectors"  class="ftr-nav-link">Sectors</a>
       <a href="/blog"     class="ftr-nav-link">Blog</a>
