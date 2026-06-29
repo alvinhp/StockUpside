@@ -235,7 +235,7 @@ async function toggleWatchlist(ticker: string, starEl: HTMLElement, isLocked: bo
     else        { watchlist.add(ticker); starEl.textContent = "★"; starEl.classList.add("wl-active"); starEl.title = "Remove from watchlist"; }
     const msg = String(e);
     if (msg.includes("Pro")) { toast(msg, "err"); showPW(); }
-    else toast("Couldn't update watchlist — please try again.", "err");
+    else toast("Couldn't update watchlist. Please try again.", "err");
   }
 }
 
@@ -447,7 +447,7 @@ function renderAlertsPage() {
     <div class="wl-empty-wrap" style="margin-top:32px">
       <div class="wl-empty-icon">🔔</div>
       <h2>No alerts set up yet</h2>
-      <p>Add your first alert above — we'll email you when the condition is met.</p>
+      <p>Add your first alert above. We'll email you when the condition is met.</p>
     </div>`;
   } else {
     const activeCount = alertRules.filter(r => r.currently_true).length;
@@ -501,7 +501,7 @@ async function loadAndRenderAlerts() {
     alertsLoaded = true;
     renderAlertsPage();
   } catch (e) {
-    toast("Could not load alerts — " + String(e), "err");
+    toast("Could not load alerts - " + String(e), "err");
   }
 }
 
@@ -760,7 +760,7 @@ function banner() {
   return `<div class="banner">
     <div class="banner-l">🔒 <strong>Viewing 20 of 4000+ stocks.</strong>
       Upgrade to reveal all analyst picks ranked by upside.</div>
-    <button class="btn-upg" id="btn-banner">Upgrade — $29/mo →</button>
+    <button class="btn-upg" id="btn-banner">Upgrade - $29/mo →</button>
   </div>`;
 }
 

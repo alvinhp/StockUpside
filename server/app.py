@@ -5939,7 +5939,7 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>{s["ticker"]} Analyst Price Target — {s["name"]} Stock Forecast | StockUpside.io</title>
+  <title>{s["ticker"]} Analyst Price Target - {s["name"]} Stock Forecast | StockUpside.io</title>
   <meta name="description" content="Wall Street analysts have a consensus price target of ${s["target_price"]} for {s["name"]} ({s["ticker"]}), {f'implying {s["upside_pct"]}% upside' if s["upside_pct"] >= 0 else f'which is {abs(s["upside_pct"])}% below'} the current price of ${s["current_price"]}. {s["analyst_count"]} analysts covered. Consensus: {s["consensus"]}. {s["sector"]} sector."/>
   <meta property="og:type"        content="article"/>
   <meta property="og:title"       content="{s["ticker"]} — {s["upside_pct"]}% Analyst Upside | StockUpside.io"/>
@@ -6161,7 +6161,7 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
     </div>
 
     <div class="sp-card">
-      <div class="sp-card-title">ANALYST CONSENSUS — {s["consensus"].upper()}</div>
+      <div class="sp-card-title">ANALYST CONSENSUS - {s["consensus"].upper()}</div>
       <div class="rbar-wrap">
         <div class="rbar-row">
           <span class="rbar-lbl" style="color:#00e676">Strong Buy</span>
@@ -6314,7 +6314,7 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
       <strong>${s["target_price"]}</strong>, {"implying potential upside of <strong>" + str(s["upside_pct"]) + "%</strong>" if s["upside_pct"] >= 0 else "which is <strong>" + str(abs(s["upside_pct"])) + "%</strong> below the current price"}
       over the next 12 months.
       {s["analyst_count"]} analysts currently cover {s["ticker"]}, with a consensus rating of
-      <strong>{s["consensus"]}</strong> — {bull_pct}% of analysts rate the stock a Buy or Strong Buy.
+      <strong>{s["consensus"]}</strong> - {bull_pct}% of analysts rate the stock a Buy or Strong Buy.
       The most bullish analyst has a price target of <strong>${s["high_target"]}</strong>,
       while the most cautious has a target of <strong>${s["low_target"]}</strong>.
     </p>
@@ -6332,7 +6332,7 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
 
   {_render_analyst_calls(s["ticker"])}
 
-  <!-- Historical data tab — loaded client-side via /api/stocks/TICKER/history -->
+  <!-- Historical data tab - loaded client-side via /api/stocks/TICKER/history -->
   <div class="sp-card" style="margin-bottom:24px" id="sp-history-wrap">
     <div class="sp-card-title">HISTORICAL SNAPSHOT</div>
     <p style="font-size:12px;color:var(--text3);margin-bottom:16px">
@@ -6372,7 +6372,7 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
     }}
 
     function renderPeriod(p) {{
-      if (!p) return '<div class="sp-hist-empty">No snapshot available for this period yet.<br><span style="font-size:11px;color:var(--text3)">Data accumulates daily — check back as more snapshots are collected.</span></div>';
+      if (!p) return '<div class="sp-hist-empty">No snapshot available for this period yet.<br><span style="font-size:11px;color:var(--text3)">Data accumulates daily - check back as more snapshots are collected.</span></div>';
 
       const priceSign = p.price_change_pct > 0 ? "+" : "";
       const priceColor = p.price_change_pct > 0 ? "#00e676" : p.price_change_pct < 0 ? "#ff5252" : "var(--text2)";
@@ -6466,7 +6466,7 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
         <div class="sp-conv-label">out of 100</div>
       </div>
       <div class="sp-conv-bars">
-        <div class="sp-conv-row" title="How many analysts cover this stock. More analysts = stronger signal. Scaled logarithmically — going from 1 to 5 analysts matters more than 30 to 35.">
+        <div class="sp-conv-row" title="How many analysts cover this stock. More analysts = stronger signal. Scaled logarithmically - going from 1 to 5 analysts matters more than 30 to 35.">
           <span class="sp-conv-name">Coverage depth</span>
           <div class="sp-conv-bar-bg">
             <div class="sp-conv-bar-fill" style="width:{round(s.get('conviction_coverage',0)/30*100)}%"></div>
@@ -6497,7 +6497,7 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
       </div>
     </div>
     <p class="sp-conv-note">Measures analyst agreement, not fundamental quality.
-      A high score means analysts broadly agree on this call —
+      A high score means analysts broadly agree on this call -
       not that the stock will go up.</p>
   </div>
   <div class="sp-cta">
