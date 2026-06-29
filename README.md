@@ -93,6 +93,7 @@ MIT — use commercially, modify freely.
 - CSV Export
 - API access tier: Charge $99/mo to target quant hobbyist and small funds (needs more testing)
 - Raised free stock cap from 10 to 20 stocks
+- Added stock conviction score
 
 ## TO DO LIST
 - Post more on Reddit (User 9:1 rule)
@@ -101,8 +102,6 @@ MIT — use commercially, modify freely.
 
 ## TO DO LIST (After $100 - $1k MRR)
 - Affiliate revenue
-- Historical tracking: "Was this analyst right?"
-- Email alerts
 - Sector rotation signals
 - Plain English summaries on the stock pages
 

@@ -99,6 +99,8 @@ def _calc_forward_pe(current_price: float, forward_eps) -> float:
     if not math.isfinite(ratio) or ratio <= 0 or ratio > 1000:
         return 0
     return round(ratio, 1)
+
+def sanitize_row(row: dict) -> dict:
     """Defense-in-depth: sweep every numeric value in a finished row and
     replace any NaN/Infinity with 0 before it can reach the cache. This
     catches future fields too, not just the ones explicitly cleaned with
