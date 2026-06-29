@@ -565,22 +565,31 @@ select, input { font-family: var(--font-sans); }
 } */
  /* ── Header base (was accidentally commented out) ── */
 .hdr {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 0 24px; height: 60px;
+  display: flex; flex-direction: column;
   background: var(--bg2);
   border-bottom: 1px solid var(--border);
   position: sticky; top: 0; z-index: 100;
+}
+.hdr-top {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 24px; height: 52px;
+}
+.hdr-nav {
+  display: flex; align-items: center; gap: 2px;
+  padding: 0 16px 6px;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
 }
 
 /* ── Responsive ── */
 
 /* ── 768px: tablet + large phone landscape ── */
 @media (max-width: 768px) {
-  .hdr         { padding: 0 14px; height: 52px; }
+  .hdr-top     { padding: 0 14px; height: 52px; }
+  .hdr-nav     { display: none; }       /* nav links move to footer on mobile */
   .brand-tag   { display: none; }
   .refresh-chip{ display: none; }
   .live-chip   { display: none; }
-  .hdr-link    { display: none; }       /* nav links move to footer on mobile */
 
   .banner      { flex-direction: column; align-items: flex-start; gap: 10px; padding: 10px 14px; }
   .btn-upg     { width: 100%; text-align: center; }
