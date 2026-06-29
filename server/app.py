@@ -5398,8 +5398,19 @@ def api_stock_history(ticker: str):
             round(today_upside - upside, 1)
             if upside is not None else None
         )
-        # Rank: lower number = better. Positive rank_change means rank improved.
         rank_change = (rank - today_rank) if rank and today_rank else None
+
+        today_target   = today_stock["target_price"]
+        today_analysts = today_stock["analyst_count"]
+
+        target_change_pct = (
+            round((today_target - target) / target * 100, 1)
+            if target else None
+        )
+        analyst_change = (
+            (today_analysts - analyst_count)
+            if analyst_count is not None and today_analysts is not None else None
+        )
 
         periods_out.append({
             "label":             label,
@@ -5412,8 +5423,10 @@ def api_stock_history(ticker: str):
             "consensus":         consensus,
             "analyst_count":     analyst_count,
             "price_change_pct":  price_change_pct,
+            "target_change_pct": target_change_pct,
             "upside_change":     upside_change,
             "rank_change":       rank_change,
+            "analyst_change":    analyst_change,
             "consensus_changed": consensus != today_cons,
         })
 
@@ -5640,8 +5653,14 @@ def api_changes():
 
         curr_score = CONSENSUS_SCORE.get(curr_con, 3)
 
-        # No past data — brand new coverage
+        # No past data — brand new coverage.
+        # Quality gates: require at least 2 analysts and upside below 500%
+        # to filter out penny stocks where 1 analyst sets an absurd target.
         if past_con is None:
+            if (curr_n or 0) < 2:
+                continue
+            if (curr_up or 0) > 500:
+                continue
             new_coverage.append({
                 "ticker":          ticker,
                 "consensus":       curr_con,
@@ -6379,10 +6398,10 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
           <div class="sp-hist-col">
             <div class="sp-hist-colhead">CHANGE SINCE THEN</div>
             <div class="sp-stat"><span class="sp-stat-l">Price</span><span class="sp-stat-v" style="color:${{priceColor}}">${{p.price_change_pct != null ? priceSign + p.price_change_pct + "%" : "—"}}</span></div>
-            <div class="sp-stat"><span class="sp-stat-l">Target</span><span class="sp-stat-v" style="color:var(--text3)">not tracked</span></div>
+            <div class="sp-stat"><span class="sp-stat-l">Target</span><span class="sp-stat-v" style="color:${{p.target_change_pct != null ? (p.target_change_pct > 0 ? "#00e676" : p.target_change_pct < 0 ? "#ff5252" : "var(--text2)") : "var(--text3)"}}">${{p.target_change_pct != null ? (p.target_change_pct >= 0 ? "+" : "") + p.target_change_pct + "%" : "—"}}</span></div>
             <div class="sp-stat"><span class="sp-stat-l">Upside</span><span class="sp-stat-v" style="color:${{upsideColor}}">${{p.upside_change != null ? upsideSign + p.upside_change + "pp" : "—"}}</span></div>
             <div class="sp-stat"><span class="sp-stat-l">Consensus</span><span class="sp-stat-v">${{p.consensus_changed ? '<span style="color:#ffd740">Changed</span>' : '<span style="color:var(--text3)">Unchanged</span>'}}</span></div>
-            <div class="sp-stat"><span class="sp-stat-l">Analysts</span><span class="sp-stat-v" style="color:var(--text3)">not tracked</span></div>
+            <div class="sp-stat"><span class="sp-stat-l">Analysts</span><span class="sp-stat-v" style="color:${{p.analyst_change != null ? (p.analyst_change > 0 ? "#00e676" : p.analyst_change < 0 ? "#ff5252" : "var(--text2)") : "var(--text3)"}}">${{p.analyst_change != null ? (p.analyst_change > 0 ? "+" : "") + p.analyst_change : "—"}}</span></div>
             <div class="sp-stat"><span class="sp-stat-l">Rank</span><span class="sp-stat-v" style="color:${{rankColor}}">${{p.rank_change != null ? rankSign + p.rank_change + " " + rankNote : "—"}}</span></div>
           </div>
         </div>`;
@@ -6447,28 +6466,28 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
         <div class="sp-conv-label">out of 100</div>
       </div>
       <div class="sp-conv-bars">
-        <div class="sp-conv-row">
+        <div class="sp-conv-row" title="How many analysts cover this stock. More analysts = stronger signal. Scaled logarithmically — going from 1 to 5 analysts matters more than 30 to 35.">
           <span class="sp-conv-name">Coverage depth</span>
           <div class="sp-conv-bar-bg">
             <div class="sp-conv-bar-fill" style="width:{round(s.get('conviction_coverage',0)/30*100)}%"></div>
           </div>
           <span class="sp-conv-pts">{s.get("conviction_coverage",0)}<span class="sp-conv-max">/30</span></span>
         </div>
-        <div class="sp-conv-row">
+        <div class="sp-conv-row" title="How tightly analysts agree on the price target. Measured as the gap between the bull and bear target as a % of the current price. A $5 spread on a $100 stock = very tight = high score.">
           <span class="sp-conv-name">Consensus clarity</span>
           <div class="sp-conv-bar-bg">
             <div class="sp-conv-bar-fill" style="width:{round(s.get('conviction_clarity',0)/30*100)}%"></div>
           </div>
           <span class="sp-conv-pts">{s.get("conviction_clarity",0)}<span class="sp-conv-max">/30</span></span>
         </div>
-        <div class="sp-conv-row">
+        <div class="sp-conv-row" title="What fraction of analysts rate this stock Buy or Strong Buy. 100% bull ratings = 25pts. Score drops as Hold and Sell ratings appear.">
           <span class="sp-conv-name">Vote unanimity</span>
           <div class="sp-conv-bar-bg">
             <div class="sp-conv-bar-fill" style="width:{round(s.get('conviction_unanimity',0)/25*100)}%"></div>
           </div>
           <span class="sp-conv-pts">{s.get("conviction_unanimity",0)}<span class="sp-conv-max">/25</span></span>
         </div>
-        <div class="sp-conv-row">
+        <div class="sp-conv-row" title="How long the consensus rating has been stable or improving. A rating held for 90+ days is worth more than one that changed last week.">
           <span class="sp-conv-name">Rating stability</span>
           <div class="sp-conv-bar-bg">
             <div class="sp-conv-bar-fill" style="width:{round(s.get('conviction_tenure',0)/15*100)}%"></div>

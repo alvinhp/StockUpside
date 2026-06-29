@@ -37,6 +37,7 @@ let minMarketCap = 0; // raw USD; 0 = no filter
 let maxPE = 0; // 0 = no filter
 let maxPEG = 0; // 0 = no filter
 let momentumFilter = "All"; // All | up | down | neutral
+let minConviction = 0;
 let query = "";
 let detail = null;
 let tickTimer = null;
@@ -307,6 +308,8 @@ function applyFilters() {
         s = s.filter(x => x.locked || (x.peg_ratio > 0 && x.peg_ratio <= maxPEG));
     if (momentumFilter !== "All")
         s = s.filter(x => x.locked || x.momentum_trend === momentumFilter);
+    if (minConviction > 0)
+        s = s.filter(x => x.locked || (x.conviction_score ?? 0) >= minConviction);
     const locked = s.filter(x => x.locked), free = s.filter(x => !x.locked);
     free.sort((a, b) => {
         const av = a[sortKey] ?? 0, bv = b[sortKey] ?? 0;
@@ -772,7 +775,7 @@ function banner() {
     return `<div class="banner">
     <div class="banner-l">🔒 <strong>Viewing 20 of 4000+ stocks.</strong>
       Upgrade to reveal all analyst picks ranked by upside.</div>
-    <button class="btn-upg" id="btn-banner">Upgrade - $29/mo →</button>
+    <button class="btn-upg" id="btn-banner">Upgrade — $29/mo →</button>
   </div>`;
 }
 function generatingBanner() {
@@ -903,6 +906,15 @@ function controls(sectors, count) {
           <option value="up"${momentumFilter === "up" ? " selected" : ""}>↑ Improving</option>
           <option value="neutral"${momentumFilter === "neutral" ? " selected" : ""}>→ Neutral</option>
           <option value="down"${momentumFilter === "down" ? " selected" : ""}>↓ Weakening</option>
+        </select>
+      </div>
+      <div class="flt-g"><label class="flt-lbl" title="Min Analyst Conviction Score (0–100). Measures analyst agreement: coverage depth, consensus tightness, vote unanimity, and rating stability.">CONVICTION ⓘ</label>
+        <select class="flt-sel" id="flt-conviction"${tier !== "pro" ? " disabled" : ""}>
+          <option value="0"${minConviction === 0 ? " selected" : ""}>Any</option>
+          <option value="25"${minConviction === 25 ? " selected" : ""}>25+</option>
+          <option value="50"${minConviction === 50 ? " selected" : ""}>50+ Medium</option>
+          <option value="65"${minConviction === 65 ? " selected" : ""}>65+</option>
+          <option value="75"${minConviction === 75 ? " selected" : ""}>75+ High</option>
         </select>
       </div>
       <div class="res-cnt">Showing <strong id="cnt">${count}</strong> stocks</div>
@@ -1728,6 +1740,9 @@ function bindGlobals() {
     const fMom = document.getElementById("flt-momentum");
     if (fMom)
         fMom.onchange = () => { momentumFilter = fMom.value; currentPage = 1; applyFilters(); renderRows(); };
+    const fConv = document.getElementById("flt-conviction");
+    if (fConv)
+        fConv.onchange = () => { minConviction = parseInt(fConv.value) || 0; currentPage = 1; applyFilters(); renderRows(); };
     // CSV export (Pro only)
     const btnExport = document.getElementById("btn-export");
     if (btnExport) {
