@@ -739,6 +739,7 @@ function header() {
       <a href="/changes" class="hdr-link">Rating Changes</a>
       <a href="/accuracy" class="hdr-link">Accuracy</a>
       <a href="/analyst-track-record" class="hdr-link">Track Record</a>
+      <a href="/firm-track-record" class="hdr-link">Firm Rankings</a>
       <a href="/stocks" class="hdr-link">All Stocks</a>
       <a href="/sectors" class="hdr-link">Sectors</a>
       <a href="/blog" class="hdr-link">Blog</a>
@@ -1180,6 +1181,7 @@ function mobileNavTabs(): string {
     <a href="/changes" class="mob-tab">Rating Changes</a>
     <a href="/accuracy" class="mob-tab">Accuracy</a>
     <a href="/analyst-track-record" class="mob-tab">Track Record</a>
+    <a href="/firm-track-record" class="mob-tab">Firm Rankings</a>
     <a href="/stocks" class="mob-tab">All Stocks</a>
     <a href="/sectors" class="mob-tab">Sectors</a>
     <a href="/blog" class="mob-tab">Blog</a>
@@ -1194,6 +1196,7 @@ function footer() {
       <a href="/changes" class="ftr-nav-link">Rating Changes</a>
       <a href="/accuracy" class="ftr-nav-link">Accuracy</a>
       <a href="/analyst-track-record" class="ftr-nav-link">Track Record</a>
+      <a href="/firm-track-record" class="ftr-nav-link">Firm Rankings</a>
       <a href="/stocks"   class="ftr-nav-link">All Stocks</a>
       <a href="/sectors"  class="ftr-nav-link">Sectors</a>
       <a href="/blog"     class="ftr-nav-link">Blog</a>

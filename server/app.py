@@ -1193,6 +1193,7 @@ def render_analyst_track_record() -> str:
   <div>© {yr} StockUpside.io · Not financial advice</div>
   <div class="ftr-r">
     <a href="/accuracy">Accuracy</a> ·
+    <a href="/firm-track-record">Firm Rankings</a> ·
     <a href="/changes">Changes</a> ·
     <a href="/stocks">All Stocks</a>
   </div>
@@ -1212,7 +1213,7 @@ function retColor(r) {{
 }}
 
 function renderSummaryCards(data) {{
-  const cp = data.checkpoints[30] || {{}};
+  const cp = data.checkpoints[currentDays] || {{}};
   if (!cp.total) return `
     <div class="no-data-card">
       <div class="no-data-icon">⏳</div>
@@ -1231,7 +1232,7 @@ function renderSummaryCards(data) {{
   return `
     <div class="atr-cards">
       <div class="atr-card">
-        <div class="atr-card-lbl">HIT RATE ({30}D)</div>
+        <div class="atr-card-lbl">HIT RATE (${{currentDays}}D)</div>
         <div class="atr-card-val" style="color:${{col}}">${{cp.hit_rate}}%</div>
         <div class="atr-card-sub">of targets reached</div>
       </div>
@@ -1261,7 +1262,7 @@ function renderByConsensus(data) {{
   if (!data.by_consensus.length) return '';
   return `
     <div class="atr-section">
-      <div class="atr-section-title">ACCURACY BY CONSENSUS RATING ({30}-DAY)</div>
+      <div class="atr-section-title">ACCURACY BY CONSENSUS RATING (${{currentDays}}-DAY)</div>
       <table class="atr-table">
         <thead><tr>
           <th>RATING</th>
@@ -1380,9 +1381,9 @@ function renderAll(data) {{
   
   const tabsHtml = `
     <div class="atr-tabs" style="margin-bottom:28px">
-      <button class="atr-tab ${{30===30?'active':''}}" data-days="30">30 Days</button>
-      <button class="atr-tab ${{30===60?'active':''}}" data-days="60">60 Days</button>
-      <button class="atr-tab ${{30===90?'active':''}}" data-days="90">90 Days</button>
+      <button class="atr-tab ${{currentDays===30?'active':''}}" data-days="30">30 Days</button>
+      <button class="atr-tab ${{currentDays===60?'active':''}}" data-days="60">60 Days</button>
+      <button class="atr-tab ${{currentDays===90?'active':''}}" data-days="90">90 Days</button>
     </div>`;
 
   document.getElementById('atr-content').innerHTML =
@@ -1395,7 +1396,7 @@ function renderAll(data) {{
   // Bind tabs
   document.querySelectorAll('.atr-tab').forEach(btn => {{
     btn.addEventListener('click', () => {{
-      30 = parseInt(btn.dataset.days);
+      currentDays = parseInt(btn.dataset.days);
       renderAll(data);
     }});
   }});
@@ -1536,6 +1537,7 @@ def render_changes_page(mode: str) -> str:
 <footer class="ftr">
   <div>© {yr} StockUpside.io · Updated nightly · Not financial advice</div>
   <div class="ftr-r">
+    <a href="/analyst-track-record">Track Record</a> ·
     <a href="/changes">Changes</a> ·
     <a href="/accuracy">Accuracy</a> ·
     <a href="/stocks">All Stocks</a>
