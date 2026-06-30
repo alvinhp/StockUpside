@@ -199,7 +199,14 @@ def send_digest_job():
 
     sent = 0
     for addr, plan in subs:
-        prefs = get_email_prefs(addr) if plan == "pro" else None
+        if plan == "pro":
+            prefs = get_email_prefs(addr)
+        else:
+            # Free users haven't set custom filters, but passing None
+            # caused digest_email_html to use the raw ranked list — which
+            # puts penny stocks with a single analyst at the top. Apply a
+            # sensible baseline so free digests are actually useful.
+            prefs = dict(FREE_DEFAULT_EMAIL_PREFS)
         subj, html, text = digest_email_html(stocks, addr, prefs=prefs)
         if send_email(addr, subj, html, text):
             sent += 1
@@ -1213,7 +1220,7 @@ function retColor(r) {{
 }}
 
 function renderSummaryCards(data) {{
-  const cp = data.checkpoints[currentDays] || {{}};
+  const cp = data.checkpoints[30] || {{}};
   if (!cp.total) return `
     <div class="no-data-card">
       <div class="no-data-icon">⏳</div>
@@ -1232,7 +1239,7 @@ function renderSummaryCards(data) {{
   return `
     <div class="atr-cards">
       <div class="atr-card">
-        <div class="atr-card-lbl">HIT RATE (${{currentDays}}D)</div>
+        <div class="atr-card-lbl">HIT RATE ({30}D)</div>
         <div class="atr-card-val" style="color:${{col}}">${{cp.hit_rate}}%</div>
         <div class="atr-card-sub">of targets reached</div>
       </div>
@@ -1262,7 +1269,7 @@ function renderByConsensus(data) {{
   if (!data.by_consensus.length) return '';
   return `
     <div class="atr-section">
-      <div class="atr-section-title">ACCURACY BY CONSENSUS RATING (${{currentDays}}-DAY)</div>
+      <div class="atr-section-title">ACCURACY BY CONSENSUS RATING ({30}-DAY)</div>
       <table class="atr-table">
         <thead><tr>
           <th>RATING</th>
@@ -1381,9 +1388,9 @@ function renderAll(data) {{
   
   const tabsHtml = `
     <div class="atr-tabs" style="margin-bottom:28px">
-      <button class="atr-tab ${{currentDays===30?'active':''}}" data-days="30">30 Days</button>
-      <button class="atr-tab ${{currentDays===60?'active':''}}" data-days="60">60 Days</button>
-      <button class="atr-tab ${{currentDays===90?'active':''}}" data-days="90">90 Days</button>
+      <button class="atr-tab ${{30===30?'active':''}}" data-days="30">30 Days</button>
+      <button class="atr-tab ${{30===60?'active':''}}" data-days="60">60 Days</button>
+      <button class="atr-tab ${{30===90?'active':''}}" data-days="90">90 Days</button>
     </div>`;
 
   document.getElementById('atr-content').innerHTML =
@@ -1396,7 +1403,7 @@ function renderAll(data) {{
   // Bind tabs
   document.querySelectorAll('.atr-tab').forEach(btn => {{
     btn.addEventListener('click', () => {{
-      currentDays = parseInt(btn.dataset.days);
+      30 = parseInt(btn.dataset.days);
       renderAll(data);
     }});
   }});
@@ -1817,6 +1824,21 @@ DEFAULT_EMAIL_PREFS = {
     "max_pe": 0, "max_peg": 0, "momentum": "All",
 }
 
+# Baseline filter applied to free-tier digest emails.
+# Free users haven't configured custom filters, but sending the raw
+# top-20 overall produces a misleading list — rank #1 is typically a
+# penny stock with a single analyst and a 60,000% target, which has
+# no practical value. These defaults mirror a reasonable free-user
+# experience: at least 2 analysts covering the stock (so a single
+# outlier call can't dominate), and consensus must be Buy or Strong Buy
+# (so the email isn't just a list of speculative micro-caps no analyst
+# actually recommends). Market cap is intentionally left at 0 so the
+# email still surfaces small-caps with genuine analyst coverage.
+FREE_DEFAULT_EMAIL_PREFS = {
+    "sector": "All", "consensus": "Buy", "min_analysts": 2,
+    "max_pe": 0, "max_peg": 0, "momentum": "All",
+}
+
 def get_email_prefs(email_addr: str) -> dict:
     """Return saved digest filter preferences for a subscriber, or the
     defaults (no filters, top-10 overall) if none have been saved."""
@@ -1872,7 +1894,14 @@ def apply_email_filters(stocks: list, prefs: dict, limit: int = 10) -> list:
 
     consensus = prefs.get("consensus", "All")
     if consensus and consensus != "All":
-        s = [x for x in s if x.get("consensus") == consensus]
+        # "Buy" in the filter means "Buy or better" (i.e. include Strong Buy),
+        # matching how the frontend's consensus filter works. Without this,
+        # FREE_DEFAULT_EMAIL_PREFS with consensus="Buy" would exclude Strong Buy
+        # stocks entirely — the opposite of what's wanted.
+        if consensus == "Buy":
+            s = [x for x in s if x.get("consensus") in ("Buy", "Strong Buy")]
+        else:
+            s = [x for x in s if x.get("consensus") == consensus]
 
     min_analysts = int(prefs.get("min_analysts", 0) or 0)
     if min_analysts > 0:
@@ -2122,13 +2151,29 @@ def digest_email_html(stocks: list, email_addr: str, prefs: dict | None = None) 
     """
     today      = datetime.date.today().strftime("%B %d, %Y")
     unsub      = _unsubscribe_url(email_addr)
-    is_custom  = bool(prefs) and prefs != DEFAULT_EMAIL_PREFS
 
-    picks = apply_email_filters(stocks, prefs, limit=10) if prefs else None
+    # prefs is always provided now (free users get FREE_DEFAULT_EMAIL_PREFS,
+    # pro users get their saved preferences or DEFAULT_EMAIL_PREFS).
+    # is_custom is True only when a pro user has diverged from the plain
+    # defaults — free users using FREE_DEFAULT_EMAIL_PREFS should never
+    # trigger the "YOUR TOP 10" personalised subject line.
+    effective_prefs = prefs if prefs else dict(FREE_DEFAULT_EMAIL_PREFS)
+    is_custom = (bool(prefs)
+                 and prefs != DEFAULT_EMAIL_PREFS
+                 and prefs != FREE_DEFAULT_EMAIL_PREFS)
+
+    picks = apply_email_filters(stocks, effective_prefs, limit=20)
     fell_back = False
     if not picks:
-        picks     = [s for s in stocks if not s.get("locked")][:20]
+        # Custom pro filters returned nothing — fall back to the free
+        # baseline rather than the raw unfiltered list, so even the
+        # fallback email shows quality stocks.
+        picks = apply_email_filters(stocks, FREE_DEFAULT_EMAIL_PREFS, limit=20)
         fell_back = is_custom
+    if not picks:
+        # Absolute last resort: truly nothing passes even the baseline.
+        picks = [s for s in stocks if not s.get("locked")][:20]
+        fell_back = True
 
     rows_html = ""
     rows_txt  = ""
