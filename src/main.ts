@@ -777,20 +777,20 @@ function generatingBanner() {
     </div>`;
 }
 
-function statsBar() {
+function statsLeft() {
   if (!stats) return "";
+  return `<div class="scard scard-inline"><div class="sc-lbl">STOCKS TRACKED</div><div class="sc-val sc-val-lg">${stats.total_stocks}</div></div>`;
+}
 
-  // Freshness indicator
+function statsRight() {
+  if (!stats) return "";
   const freshnessColor = stats.freshness === "fresh"  ? "var(--green-b)"
                        : stats.freshness === "aging"  ? "var(--amber)"
                        :                                "var(--red)";
   const freshnessLabel = stats.freshness === "fresh"  ? "● Live"
                        : stats.freshness === "aging"  ? "● 1 day old"
                        :                                `● ${stats.days_old}d old`;
-
-  return `
-    <div class="scard scard-inline"><div class="sc-lbl">STOCKS TRACKED</div><div class="sc-val sc-val-lg">${stats.total_stocks}</div></div>
-    <div class="scard scard-inline">
+  return `<div class="scard scard-inline scard-right">
       <div class="sc-lbl">LAST UPDATED</div>
       <div class="sc-val sc-val-lg">${stats.last_updated}</div>
       <div class="sc-fresh" style="color:${freshnessColor}">${freshnessLabel}</div>
@@ -833,11 +833,14 @@ function statsBarMobile() {
 function controls(sectors: string[], count: number) {
   const cons = ["All","Strong Buy","Buy","Hold","Underperform"];
   return `<div class="ctrl">
-    <div class="ctrl-stats">${statsBar()}</div>
-    <div class="srch-wrap">
-      <span class="srch-icon">⌕</span>
-      <input id="srch" class="srch" type="text" placeholder="Search ticker, company, sector…" value="${escapeHtml(query)}" />
-      ${query ? `<button class="srch-clr" id="srch-clr">✕</button>` : ""}
+    <div class="ctrl-top">
+      <div class="ctrl-side ctrl-side-l">${statsLeft()}</div>
+      <div class="srch-wrap">
+        <span class="srch-icon">⌕</span>
+        <input id="srch" class="srch" type="text" placeholder="Search ticker, company, sector…" value="${escapeHtml(query)}" />
+        ${query ? `<button class="srch-clr" id="srch-clr">✕</button>` : ""}
+      </div>
+      <div class="ctrl-side ctrl-side-r">${statsRight()}</div>
     </div>
     <div class="flts">
       <div class="flt-g"><label class="flt-lbl">SECTOR</label>

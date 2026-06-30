@@ -205,20 +205,25 @@ select, input { font-family: var(--font-sans); }
 
 /* ── Controls ── */
 .ctrl {
-  display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap;
+  display: flex; flex-direction: column; gap: 14px;
   padding: 14px 24px;
   background: var(--bg2);
   border-bottom: 1px solid var(--border);
 }
-.ctrl-stats {
-  display: flex; align-items: center; gap: 20px;
-  padding-right: 16px;
-  border-right: 1px solid var(--border);
+.ctrl-top {
+  display: grid;
+  grid-template-columns: 1fr minmax(320px, 480px) 1fr;
+  align-items: center;
+  gap: 16px;
 }
+.ctrl-side { display: flex; align-items: center; min-width: 0; }
+.ctrl-side-l { justify-content: flex-start; }
+.ctrl-side-r { justify-content: flex-end; }
 .scard-inline { padding: 0; border-right: none; min-width: 0; }
-.sc-val-lg { font-size: 22px; }
+.scard-right { text-align: right; }
+.sc-val-lg { font-size: 22px; white-space: nowrap; }
 .srch-wrap {
-  position:relative;display:flex;align-items:center;flex:0 1 280px;min-width:180px;
+  position:relative;display:flex;align-items:center;width:100%;
 }
 .srch-icon {
   position:absolute;left:10px;color:var(--text3);font-size:16px;pointer-events:none;
@@ -610,7 +615,8 @@ select, input { font-family: var(--font-sans); }
   .scard       { border-right: none; border-bottom: 1px solid var(--border); }
 
   .ctrl        { padding: 10px 14px; gap: 10px; }
-  .ctrl-stats  { display: none; }
+  .ctrl-top    { grid-template-columns: 1fr; }
+  .ctrl-side-l, .ctrl-side-r { display: none; }
   .flts        { width: 100%; justify-content: space-between; }
   .res-cnt     { display: none; }        /* declutters the controls bar */
 
