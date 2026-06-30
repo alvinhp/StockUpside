@@ -99,6 +99,8 @@ def _calc_forward_pe(current_price: float, forward_eps) -> float:
     if not math.isfinite(ratio) or ratio <= 0 or ratio > 1000:
         return 0
     return round(ratio, 1)
+
+def sanitize_row(row: dict) -> dict:
     """Defense-in-depth: sweep every numeric value in a finished row and
     replace any NaN/Infinity with 0 before it can reach the cache. This
     catches future fields too, not just the ones explicitly cleaned with
@@ -900,15 +902,7 @@ def fetch_ticker_row(ticker: str) -> dict | None:
             # stocks like DOCN from the dataset for an entire day's run.
             # Retry a couple more times before accepting "no target" as
             # the real answer.
-            has_target = bool(info.get("targetMeanPrice"))
-            if not has_target:
-                try:
-                    apt = t_obj.analyst_price_targets if t_obj else None
-                    if apt and apt.get("mean"):
-                        has_target = True
-                except Exception:
-                    pass
-            if not has_target and attempt < retries - 1:
+            if not info.get("targetMeanPrice") and attempt < retries - 1:
                 raise ValueError("Missing targetMeanPrice — retrying before giving up")
             _register_rate_limit_ok()
             break
@@ -931,32 +925,7 @@ def fetch_ticker_row(ticker: str) -> dict | None:
 
     try:
         current_price = info.get("currentPrice") or info.get("regularMarketPrice") or 0
-
-        # ── Price target: prefer analyst_price_targets, fall back to info ────
-        # info["targetMeanPrice"] is Yahoo's server-side cached value and can
-        # lag by hours after a high-profile target change (e.g. Bernstein
-        # cutting NUVL from $172 -> $124). analyst_price_targets is fetched
-        # from a separate, fresher Yahoo endpoint and tends to match the
-        # number shown on finance.yahoo.com more closely.
-        target_price = 0.0
-        high_target  = 0.0
-        low_target   = 0.0
-        try:
-            apt = t_obj.analyst_price_targets
-            if apt is not None:
-                target_price = _finite(apt.get("mean"))
-                high_target  = _finite(apt.get("high"))
-                low_target   = _finite(apt.get("low"))
-        except Exception:
-            pass
-        # Fall back to info if the dedicated endpoint came back empty
-        if not target_price:
-            target_price = _finite(info.get("targetMeanPrice"))
-        if not high_target:
-            high_target  = _finite(info.get("targetHighPrice"))
-        if not low_target:
-            low_target   = _finite(info.get("targetLowPrice"))
-
+        target_price  = info.get("targetMeanPrice") or 0
         analyst_count = info.get("numberOfAnalystOpinions") or 0
 
         # NOTE: NaN is truthy in Python, so `nan or 0` returns nan (never
@@ -983,27 +952,15 @@ def fetch_ticker_row(ticker: str) -> dict | None:
         # disappear from the dataset (confusing, especially for stocks on
         # a user's watchlist) instead of just showing a negative number.
 
+        high_target = _finite(info.get("targetHighPrice"))
+        low_target  = _finite(info.get("targetLowPrice"))
+
         # ── Analyst rating breakdown ─────────────────────────────────────────
-        # The old code used t_obj.recommendations, which is a rolling monthly
-        # aggregate — each row is one calendar month of totals. Using .tail(1)
-        # on that gives the most recent month's period, but those totals lag
-        # real-time because they include all ratings from that entire month.
-        # A downgrade on June 24 barely moves a month that already has 23 days
-        # of prior Buy ratings baked in.
-        #
-        # Fix: use recommendations_summary first (the "0m" period row), which
-        # Yahoo populates with the current live snapshot matching what
-        # finance.yahoo.com shows. Fall back to the rolling monthly data only
-        # if the summary is unavailable, then further to a rec_mean estimate.
         sb = b = h = s = 0
         try:
-            rs = t_obj.recommendations_summary
-            if rs is not None and not rs.empty:
-                # Period "0m" is the current live snapshot
-                row0 = rs[rs["period"] == "0m"]
-                if row0.empty:
-                    row0 = rs.iloc[[0]]  # fallback if period column differs
-                latest  = row0.iloc[0]
+            rec = t_obj.recommendations
+            if rec is not None and not rec.empty:
+                latest  = rec.tail(1).iloc[0]
                 raw_sb  = int(latest.get("strongBuy",  0))
                 raw_b   = int(latest.get("buy",        0))
                 raw_h   = int(latest.get("hold",       0))
@@ -1018,27 +975,6 @@ def fetch_ticker_row(ticker: str) -> dict | None:
         except Exception:
             pass
 
-        # Secondary fallback: rolling monthly recommendations (old behaviour)
-        if sb + b + h + s == 0:
-            try:
-                rec = t_obj.recommendations
-                if rec is not None and not rec.empty:
-                    latest  = rec.tail(1).iloc[0]
-                    raw_sb  = int(latest.get("strongBuy",  0))
-                    raw_b   = int(latest.get("buy",        0))
-                    raw_h   = int(latest.get("hold",       0))
-                    raw_s   = int(latest.get("sell",       0)) + int(latest.get("strongSell", 0))
-                    raw_tot = raw_sb + raw_b + raw_h + raw_s
-                    if raw_tot > 0:
-                        n  = analyst_count
-                        sb = round(n * raw_sb / raw_tot)
-                        b  = round(n * raw_b  / raw_tot)
-                        h  = round(n * raw_h  / raw_tot)
-                        s  = max(0, n - sb - b - h)
-            except Exception:
-                pass
-
-        # Tertiary fallback: estimate from recommendationMean
         if sb + b + h + s == 0:
             n        = analyst_count
             rec_mean = info.get("recommendationMean") or 3.0
