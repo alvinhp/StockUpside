@@ -725,7 +725,6 @@ function renderAll() {
     ${tier === "free" ? banner() : ""}
     ${tier === "free" ? emailBar() : ""}
     ${stats?.generating ? generatingBanner() : ""}
-    <div class="sbar-desktop">${statsBar()}</div>
     <div class="ctrl-and-nav">
       <div class="mobile-nav-tabs">${mobileNavTabs()}</div>
       ${controls(sectors, countShow)}
@@ -802,17 +801,13 @@ function statsBar() {
     const freshnessLabel = stats.freshness === "fresh" ? "● Live"
         : stats.freshness === "aging" ? "● 1 day old"
             : `● ${stats.days_old}d old`;
-    return `<div class="sbar">
-    <div class="scard"><div class="sc-lbl">STOCKS TRACKED</div><div class="sc-val">${stats.total_stocks}</div></div>
-    <div class="scard"><div class="sc-lbl">AVG ANALYST UPSIDE</div><div class="sc-val pos">${pct(stats.avg_upside)}</div></div>
-    <div class="scard"><div class="sc-lbl">TOP UPSIDE PICK</div><div class="sc-val pos">${pct(stats.top_upside)}</div></div>
-    <div class="scard"><div class="sc-lbl">BUY / STRONG BUY</div><div class="sc-val pos">${stats.strong_buy_count} <span class="sc-unit">stocks</span></div></div>
-    <div class="scard">
+    return `
+    <div class="scard scard-inline"><div class="sc-lbl">STOCKS TRACKED</div><div class="sc-val sc-val-lg">${stats.total_stocks}</div></div>
+    <div class="scard scard-inline">
       <div class="sc-lbl">LAST UPDATED</div>
-      <div class="sc-val">${stats.last_updated}</div>
+      <div class="sc-val sc-val-lg">${stats.last_updated}</div>
       <div class="sc-fresh" style="color:${freshnessColor}">${freshnessLabel}</div>
-    </div>
-  </div>`;
+    </div>`;
 }
 function emailBar() {
     // Don't show if already subscribed (free or pro) this session
@@ -850,6 +845,7 @@ function statsBarMobile() {
 function controls(sectors, count) {
     const cons = ["All", "Strong Buy", "Buy", "Hold", "Underperform"];
     return `<div class="ctrl">
+    <div class="ctrl-stats">${statsBar()}</div>
     <div class="srch-wrap">
       <span class="srch-icon">⌕</span>
       <input id="srch" class="srch" type="text" placeholder="Search ticker, company, sector…" value="${escapeHtml(query)}" />
@@ -1469,7 +1465,6 @@ function fixStickyOffset() {
         const hdr = document.querySelector(".hdr");
         const ban = document.querySelector(".banner");
         const emailBar = document.querySelector(".email-bar");
-        const sbar = document.querySelector(".sbar-desktop .sbar");
         const ctrl = document.querySelector(".ctrl");
         if (hdr)
             offset += hdr.offsetHeight;
@@ -1477,8 +1472,6 @@ function fixStickyOffset() {
             offset += ban.offsetHeight;
         if (emailBar)
             offset += emailBar.offsetHeight; // was missing — caused email bar to be overlapped by sticky ctrl on desktop
-        if (sbar)
-            offset += sbar.offsetHeight;
         if (ctrl) {
             ctrl.style.top = `${offset}px`;
             offset += ctrl.offsetHeight;
