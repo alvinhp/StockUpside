@@ -175,8 +175,8 @@ select, input { font-family: var(--font-sans); }
 .sbar {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
-  gap: 12px;
-  padding: 16px 20px;
+  gap: 8px;
+  padding: 6px 20px;
   background: var(--bg2);
   border-bottom: 1px solid var(--border);
 }
@@ -188,20 +188,20 @@ select, input { font-family: var(--font-sans); }
 }
 .scard {
   flex:1;min-width:140px;
-  padding:14px 20px;
+  padding:6px 16px;
   border-right:1px solid var(--border);
 }
 .scard:last-child { border-right:none; }
 .sc-lbl {
-  font-family:var(--font-mono);font-size:9px;
-  color:var(--text3);letter-spacing:.12em;margin-bottom:6px;
+  font-family:var(--font-mono);font-size:8px;
+  color:var(--text3);letter-spacing:.12em;margin-bottom:2px;
 }
 .sc-val {
-  font-family:var(--font-mono);font-size:18px;font-weight:700;
+  font-family:var(--font-mono);font-size:13px;font-weight:700;
   color:var(--text);
 }
 .sc-val.pos { color:var(--green-b); }
-.sc-unit { font-size:12px;font-weight:400;color:var(--text2); }
+.sc-unit { font-size:11px;font-weight:400;color:var(--text2); }
 
 /* ── Controls ── */
 .ctrl {
@@ -575,7 +575,7 @@ select, input { font-family: var(--font-sans); }
   padding: 0 24px; height: 52px;
 }
 .hdr-nav {
-  display: flex; align-items: center; justify-content: center; gap: 2px;
+  display: flex; align-items: center; justify-content: center; gap: 18px;
   padding: 0 16px 6px;
   border-top: 1px solid var(--border);
   flex-wrap: wrap;
@@ -775,8 +775,8 @@ select, input { font-family: var(--font-sans); }
 
 .sc-fresh {
   font-family: var(--font-mono);
-  font-size: 10px;
-  margin-top: 3px;
+  font-size: 9px;
+  margin-top: 1px;
   letter-spacing: .04em;
 }
 
