@@ -210,6 +210,13 @@ select, input { font-family: var(--font-sans); }
   background: var(--bg2);
   border-bottom: 1px solid var(--border);
 }
+.ctrl-stats {
+  display: flex; align-items: center; gap: 20px;
+  padding-right: 16px;
+  border-right: 1px solid var(--border);
+}
+.scard-inline { padding: 0; border-right: none; min-width: 0; }
+.sc-val-lg { font-size: 22px; }
 .srch-wrap {
   position:relative;display:flex;align-items:center;flex:0 1 280px;min-width:180px;
 }
@@ -603,6 +610,7 @@ select, input { font-family: var(--font-sans); }
   .scard       { border-right: none; border-bottom: 1px solid var(--border); }
 
   .ctrl        { padding: 10px 14px; gap: 10px; }
+  .ctrl-stats  { display: none; }
   .flts        { width: 100%; justify-content: space-between; }
   .res-cnt     { display: none; }        /* declutters the controls bar */
 
