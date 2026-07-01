@@ -818,7 +818,13 @@ def init_db():
         upside_pct REAL,
         consensus TEXT,
         analyst_count INTEGER,
+        source TEXT,
         UNIQUE(date, ticker))""")
+
+    # One-time migration: add source column for DBs created before backfill support
+    _snap_cols = [r[1] for r in con.execute("PRAGMA table_info(snapshots)").fetchall()]
+    if "source" not in _snap_cols:
+        con.execute("ALTER TABLE snapshots ADD COLUMN source TEXT")
 
     # Price lookups added later when we check performance
     con.execute("""CREATE TABLE IF NOT EXISTS performance(

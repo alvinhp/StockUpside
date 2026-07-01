@@ -145,7 +145,11 @@ def init_db():
         date TEXT NOT NULL, ticker TEXT NOT NULL, rank INTEGER,
         current_price REAL, target_price REAL, upside_pct REAL,
         consensus TEXT, analyst_count INTEGER,
+        source TEXT,
         UNIQUE(date, ticker))""")
+    _snap_cols = [r[1] for r in con.execute("PRAGMA table_info(snapshots)").fetchall()]
+    if "source" not in _snap_cols:
+        con.execute("ALTER TABLE snapshots ADD COLUMN source TEXT")
     con.execute("""CREATE TABLE IF NOT EXISTS performance(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         snapshot_date TEXT NOT NULL, ticker TEXT NOT NULL,
