@@ -793,7 +793,7 @@ def get_momentum(ticker: str, current_consensus: str, current_count: int) -> dic
             "history": {str(k): v for k, v in history.items()}}
 
 # ── Performance checker ────────────────────────────────────────────────────────
-CHECKPOINTS = [30, 60, 90]
+CHECKPOINTS = [30, 90, 180, 365, 730]
 
 def check_performance():
     con = get_db()

@@ -58,11 +58,11 @@ else:
     BASE_DIR = _THIS_DIR
 DB_PATH = os.path.join(BASE_DIR, "server", "cache.db")
 
-CHECKPOINTS = [30, 60, 90]
+CHECKPOINTS = [30, 90, 180, 365, 730]
 # How far back to synthesise snapshot dates. 2 years gives enough data
 # for the 90-day performance checkpoint to have ~8 resolved snapshots per
 # ticker right away.
-LOOKBACK_DAYS = 730
+LOOKBACK_DAYS = 900  # 2.5 yrs gives 730d checkpoints room
 # Spacing between synthetic snapshot dates. 30-day intervals strike a balance
 # between data density and avoiding the appearance of fake daily granularity.
 SNAPSHOT_INTERVAL_DAYS = 30
@@ -123,7 +123,7 @@ def backfill_ticker(stock: dict, today: datetime.date) -> tuple[int, int]:
     if not target_price or target_price <= 0:
         return 0, 0
 
-    start_date = today - datetime.timedelta(days=LOOKBACK_DAYS + 95)  # extra buffer for 90d checkpoint
+    start_date = today - datetime.timedelta(days=LOOKBACK_DAYS + 740)  # extra buffer for 730d checkpoint
 
     try:
         t_obj = yf.Ticker(ticker)
@@ -155,7 +155,7 @@ def backfill_ticker(stock: dict, today: datetime.date) -> tuple[int, int]:
     # LOOKBACK_DAYS from today. Stop at 90 days ago so there's at least
     # one checkpoint (30d) resolvable for the most recent snapshots.
     snapshot_dates = []
-    d = today - datetime.timedelta(days=90)  # most recent snapshot that can have a 30d checkpoint
+    d = today - datetime.timedelta(days=30)  # most recent snapshot that can have a 30d checkpoint
     while d >= today - datetime.timedelta(days=LOOKBACK_DAYS):
         snapshot_dates.append(d)
         d -= datetime.timedelta(days=SNAPSHOT_INTERVAL_DAYS)

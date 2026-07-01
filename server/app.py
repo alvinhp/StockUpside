@@ -697,7 +697,7 @@ def set_generating(val: bool):
     with _generating_lock:
         _generating = val
 
-CHECKPOINTS = [30, 60, 90]
+CHECKPOINTS = [30, 90, 180, 365, 730]
 
 def check_performance():
     """
@@ -1206,7 +1206,7 @@ def render_analyst_track_record() -> str:
   <div>© {yr} StockUpside.io · Not financial advice</div>
   <div class="ftr-r">
     <a href="/accuracy">Accuracy</a> ·
-    <a href="/firm-track-record">Firm Rankings</a> ·
+    <a href="/firm-track-record">Firm Rankings</a> 
     <a href="/changes">Changes</a> ·
     <a href="/stocks">All Stocks</a>
   </div>
@@ -1226,7 +1226,7 @@ function retColor(r) {{
 }}
 
 function renderSummaryCards(data) {{
-  const cp = data.checkpoints[30] || {{}};
+  const cp = data.checkpoints[currentDays] || {{}};
   if (!cp.total) return `
     <div class="no-data-card">
       <div class="no-data-icon">⏳</div>
@@ -1245,12 +1245,12 @@ function renderSummaryCards(data) {{
   return `
     <div class="atr-cards">
       <div class="atr-card">
-        <div class="atr-card-lbl">HIT RATE ({30}D)</div>
+        <div class="atr-card-lbl">HIT RATE (${{currentDays}}D)</div>
         <div class="atr-card-val" style="color:${{col}}">${{cp.hit_rate}}%</div>
         <div class="atr-card-sub">of targets reached</div>
       </div>
       <div class="atr-card">
-        <div class="atr-card-lbl">STOCKS TRACKED</div>
+        <div class="atr-card-lbl">PREDICTIONS TRACKED</div>
         <div class="atr-card-val">${{cp.total}}</div>
         <div class="atr-card-sub">${{cp.hits}} targets hit</div>
       </div>
@@ -1275,7 +1275,7 @@ function renderByConsensus(data) {{
   if (!data.by_consensus.length) return '';
   return `
     <div class="atr-section">
-      <div class="atr-section-title">ACCURACY BY CONSENSUS RATING ({30}-DAY)</div>
+      <div class="atr-section-title">ACCURACY BY CONSENSUS RATING (${{currentDays}}-DAY)</div>
       <table class="atr-table">
         <thead><tr>
           <th>RATING</th>
@@ -1394,9 +1394,11 @@ function renderAll(data) {{
   
   const tabsHtml = `
     <div class="atr-tabs" style="margin-bottom:28px">
-      <button class="atr-tab ${{30===30?'active':''}}" data-days="30">30 Days</button>
-      <button class="atr-tab ${{30===60?'active':''}}" data-days="60">60 Days</button>
-      <button class="atr-tab ${{30===90?'active':''}}" data-days="90">90 Days</button>
+      <button class="atr-tab ${{currentDays===30?'active':''}}" data-days="30">1 Month</button>
+      <button class="atr-tab ${{currentDays===90?'active':''}}" data-days="90">3 Months</button>
+      <button class="atr-tab ${{currentDays===180?'active':''}}" data-days="180">6 Months</button>
+      <button class="atr-tab ${{currentDays===365?'active':''}}" data-days="365">1 Year</button>
+      <button class="atr-tab ${{currentDays===730?'active':''}}" data-days="730">2 Years</button>
     </div>`;
 
   document.getElementById('atr-content').innerHTML =
@@ -1409,13 +1411,13 @@ function renderAll(data) {{
   // Bind tabs
   document.querySelectorAll('.atr-tab').forEach(btn => {{
     btn.addEventListener('click', () => {{
-      30 = parseInt(btn.dataset.days);
+      currentDays = parseInt(btn.dataset.days);
       renderAll(data);
     }});
   }});
 }}
 
-fetch('/api/accuracy')
+fetch(`/api/accuracy?days=${currentDays}`)
   .then(r => r.json())
   .then(data => renderAll(data))
   .catch(() => {{
@@ -4522,7 +4524,7 @@ def render_accuracy_page() -> str:
 </footer>
 
 <script>
-fetch('/api/accuracy')
+fetch(`/api/accuracy?days=${currentDays}`)
   .then(r => r.json())
   .then(data => {{
     const el = document.getElementById('ac-content');
@@ -4562,7 +4564,7 @@ fetch('/api/accuracy')
         <div class="ac-card-title">${{d}}-DAY ACCURACY</div>
         <div class="ac-big" style="color:${{col}}">${{c.hit_rate}}%</div>
         <div class="ac-big-sub">of targets reached within ${{d}} days</div>
-        <div class="ac-stat"><span class="ac-stat-l">Stocks tracked</span>
+        <div class="ac-stat"><span class="ac-stat-l">Predictions tracked</span>
           <span class="ac-stat-v">${{c.total}}</span></div>
         <div class="ac-stat"><span class="ac-stat-l">Targets hit</span>
           <span class="ac-stat-v">${{c.hits}}</span></div>
@@ -5532,6 +5534,10 @@ def api_stock_calls(ticker):
 @app.route("/api/accuracy")
 @limiter.limit("600 per hour")
 def api_accuracy():
+    from flask import request as _req
+    days_filter = int(_req.args.get("days", 90))
+    if days_filter not in (30, 90, 180, 365, 730):
+        days_filter = 90
     con = get_db()   # use get_db(), not sqlite3.connect directly
 
     # Overall hit rate per checkpoint
@@ -5576,10 +5582,10 @@ def api_accuracy():
                AVG(p.actual_return) as avg_return
         FROM performance p
         JOIN snapshots s ON s.ticker = p.ticker AND s.date = p.snapshot_date
-        WHERE p.days_later = 90
+        WHERE p.days_later = ?
         GROUP BY s.consensus
         ORDER BY avg_return DESC
-    """).fetchall()
+    """, (days_filter,)).fetchall()
 
     # Accuracy by sector — snapshots has no sector column, so pull it from
     # the cached stock data instead
@@ -5590,8 +5596,8 @@ def api_accuracy():
     perf_rows = con.execute("""
         SELECT p.ticker, p.hit_target, p.actual_return
         FROM performance p
-        WHERE p.days_later = 90
-    """).fetchall()
+        WHERE p.days_later = ?
+    """, (days_filter,)).fetchall()
 
     for ticker, hit, ret in perf_rows:
         sector = sector_map.get(ticker, "Unknown")
