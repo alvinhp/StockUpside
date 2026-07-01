@@ -861,6 +861,7 @@ function controls(sectors: string[], count: number) {
           <option value="250000000"${minMarketCap===250000000?" selected":""}>Small+ (&gt;$250M)</option>
           <option value="2000000000"${minMarketCap===2000000000?" selected":""}>Mid+ (&gt;$2B)</option>
           <option value="10000000000"${minMarketCap===10000000000?" selected":""}>Large+ (&gt;$10B)</option>
+          <option value="200000000000"${minMarketCap===200000000000?" selected":""}>Mega+ (&gt;$200B)</option>
         </select>
       </div>
       <div class="flt-g"><label class="flt-lbl">MIN ANALYSTS${tier!=="pro"?` <span class="flt-lock" title="Free tier default — upgrade to Pro to change">🔒</span>`:""}</label>
