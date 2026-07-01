@@ -671,8 +671,14 @@ def get_full_universe() -> list:
     # than it catches real SPAC shells. SPAC shells are caught by BLANK
     # CHECK or the standalone SPAC keyword instead.
     JUNK_SUFFIXES = ("W", "WS", "U", "R")
-    JUNK_PLAIN = ("ETF", "REIT", "TRUST", "BOND", "BLANK CHECK", "ACQUISITION")
-    JUNK_WORD  = ("SPAC", "FUND", "NOTE")  # require word-boundary match
+    # Multi-word phrases: safe as plain substring (can't appear inside a real word)
+    JUNK_PLAIN = ("BLANK CHECK", "ACQUISITION")
+    # Single keywords: MUST use word-boundary to avoid matching inside real names.
+    # ETF matches "nETFlix", REIT matches "REITMANS", BOND matches "BROADCOM"
+    # without \b. TRUST is kept here too — "TRUST" inside "TRUSTWORTHY" is fine
+    # but was previously matching "INDUSTRIAL TRUST CO" correctly; \b still
+    # catches "ABC TRUST" and "TRUST CO" since TRUST is its own word there.
+    JUNK_WORD  = ("ETF", "REIT", "TRUST", "BOND", "SPAC", "FUND", "NOTE")
     try:
         import gzip as _gzip
         url = "https://www.sec.gov/files/company_tickers.json"
@@ -902,7 +908,15 @@ def fetch_ticker_row(ticker: str) -> dict | None:
             # stocks like DOCN from the dataset for an entire day's run.
             # Retry a couple more times before accepting "no target" as
             # the real answer.
-            if not info.get("targetMeanPrice") and attempt < retries - 1:
+            has_target = bool(info.get("targetMeanPrice"))
+            if not has_target:
+                try:
+                    apt = t_obj.analyst_price_targets if t_obj else None
+                    if apt and apt.get("mean"):
+                        has_target = True
+                except Exception:
+                    pass
+            if not has_target and attempt < retries - 1:
                 raise ValueError("Missing targetMeanPrice — retrying before giving up")
             _register_rate_limit_ok()
             break
@@ -925,7 +939,27 @@ def fetch_ticker_row(ticker: str) -> dict | None:
 
     try:
         current_price = info.get("currentPrice") or info.get("regularMarketPrice") or 0
-        target_price  = info.get("targetMeanPrice") or 0
+
+        # Prefer analyst_price_targets (fresher endpoint) over info["targetMeanPrice"]
+        # which can lag hours after a target change (e.g. Bernstein cutting NUVL).
+        target_price = 0.0
+        high_target  = 0.0
+        low_target   = 0.0
+        try:
+            apt = t_obj.analyst_price_targets
+            if apt is not None:
+                target_price = _finite(apt.get("mean"))
+                high_target  = _finite(apt.get("high"))
+                low_target   = _finite(apt.get("low"))
+        except Exception:
+            pass
+        if not target_price:
+            target_price = _finite(info.get("targetMeanPrice"))
+        if not high_target:
+            high_target  = _finite(info.get("targetHighPrice"))
+        if not low_target:
+            low_target   = _finite(info.get("targetLowPrice"))
+
         analyst_count = info.get("numberOfAnalystOpinions") or 0
 
         # NOTE: NaN is truthy in Python, so `nan or 0` returns nan (never
@@ -952,15 +986,17 @@ def fetch_ticker_row(ticker: str) -> dict | None:
         # disappear from the dataset (confusing, especially for stocks on
         # a user's watchlist) instead of just showing a negative number.
 
-        high_target = _finite(info.get("targetHighPrice"))
-        low_target  = _finite(info.get("targetLowPrice"))
-
         # ── Analyst rating breakdown ─────────────────────────────────────────
         sb = b = h = s = 0
+        # Primary: recommendations_summary "0m" row = live snapshot
+        # (matches what finance.yahoo.com shows, not lagged monthly aggregate)
         try:
-            rec = t_obj.recommendations
-            if rec is not None and not rec.empty:
-                latest  = rec.tail(1).iloc[0]
+            rs = t_obj.recommendations_summary
+            if rs is not None and not rs.empty:
+                row0 = rs[rs["period"] == "0m"]
+                if row0.empty:
+                    row0 = rs.iloc[[0]]
+                latest  = row0.iloc[0]
                 raw_sb  = int(latest.get("strongBuy",  0))
                 raw_b   = int(latest.get("buy",        0))
                 raw_h   = int(latest.get("hold",       0))
@@ -974,6 +1010,25 @@ def fetch_ticker_row(ticker: str) -> dict | None:
                     s  = max(0, n - sb - b - h)
         except Exception:
             pass
+        # Secondary fallback: rolling monthly recommendations
+        if sb + b + h + s == 0:
+            try:
+                rec = t_obj.recommendations
+                if rec is not None and not rec.empty:
+                    latest  = rec.tail(1).iloc[0]
+                    raw_sb  = int(latest.get("strongBuy",  0))
+                    raw_b   = int(latest.get("buy",        0))
+                    raw_h   = int(latest.get("hold",       0))
+                    raw_s   = int(latest.get("sell",       0)) + int(latest.get("strongSell", 0))
+                    raw_tot = raw_sb + raw_b + raw_h + raw_s
+                    if raw_tot > 0:
+                        n  = analyst_count
+                        sb = round(n * raw_sb / raw_tot)
+                        b  = round(n * raw_b  / raw_tot)
+                        h  = round(n * raw_h  / raw_tot)
+                        s  = max(0, n - sb - b - h)
+            except Exception:
+                pass
 
         if sb + b + h + s == 0:
             n        = analyst_count
