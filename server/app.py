@@ -4529,7 +4529,7 @@ fetch(`/api/accuracy?days=${{currentDays}}`)
   .then(data => {{
     const el = document.getElementById('ac-content');
     const cp = data.checkpoints;
-    const PERIODS = [{days:30,label:'1 Month'},{days:90,label:'3 Months'},{days:180,label:'6 Months'},{days:365,label:'1 Year'},{days:730,label:'2 Years'}];
+    const PERIODS = [{{days:30,label:'1 Month'}},{{days:90,label:'3 Months'}},{{days:180,label:'6 Months'}},{{days:365,label:'1 Year'}},{{days:730,label:'2 Years'}}];
     const hasData = PERIODS.some(p => cp[p.days] && cp[p.days].total > 0);
 
     if (!hasData) {{
