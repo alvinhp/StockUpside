@@ -4508,7 +4508,7 @@ def render_accuracy_page() -> str:
   <h1>Analyst Accuracy Tracker</h1>
   <p class="ac-sub">
     How often do Wall Street price targets actually come true?
-    We track every prediction in our database and measure real outcomes at 30, 60, and 90 days.
+    We track every prediction in our database and measure real outcomes at 1 month, 3 months, 6 months, 1 year, and 2 years.
   </p>
 
   <div id="ac-content">
@@ -4529,8 +4529,8 @@ fetch(`/api/accuracy?days=${{currentDays}}`)
   .then(data => {{
     const el = document.getElementById('ac-content');
     const cp = data.checkpoints;
-    const days = ['30','60','90'];
-    const hasData = days.some(d => cp[d] && cp[d].total > 0);
+    const PERIODS = [{days:30,label:'1 Month'},{days:90,label:'3 Months'},{days:180,label:'6 Months'},{days:365,label:'1 Year'},{days:730,label:'2 Years'}];
+    const hasData = PERIODS.some(p => cp[p.days] && cp[p.days].total > 0);
 
     if (!hasData) {{
         const started = data.collection_started;
@@ -4540,9 +4540,7 @@ fetch(`/api/accuracy?days=${{currentDays}}`)
             const due  = new Date(d); due.setDate(due.getDate() + 30);
             const dueFmt = due.toLocaleDateString("en-US", {{ month: "long", day: "numeric" }});
             el.innerHTML = `<div class="no-data">
-                ⏳ Accuracy data builds up over time. Data collection started <strong>${{fmt}}</strong> —
-                check back around <strong>${{dueFmt}}</strong> once we have enough historical
-                snapshots to measure.
+                No accuracy data yet for this period. Try '1 Month' or '3 Months' - data builds up over time.
             </div>`;
         }}
         return;
@@ -4550,18 +4548,18 @@ fetch(`/api/accuracy?days=${{currentDays}}`)
 
     // ── Checkpoint cards ──
     let cards = '<div class="ac-grid">';
-    for (const d of days) {{
+    for (const {{days: d, label: lbl}} of PERIODS) {{
       const c = cp[d];
       if (!c || c.total === 0) {{
         cards += `<div class="ac-card">
-          <div class="ac-card-title">${{d}}-DAY ACCURACY</div>
+          <div class="ac-card-title">${{lbl.toUpperCase()}} ACCURACY</div>
           <div style="color:var(--text3);font-size:12px">No data yet</div>
         </div>`;
         continue;
       }}
       const col = c.hit_rate >= 60 ? '#00e676' : c.hit_rate >= 40 ? '#ffd740' : '#f85149';
       cards += `<div class="ac-card">
-        <div class="ac-card-title">${{d}}-DAY ACCURACY</div>
+        <div class="ac-card-title">${{lbl.toUpperCase()}} ACCURACY</div>
         <div class="ac-big" style="color:${{col}}">${{c.hit_rate}}%</div>
         <div class="ac-big-sub">of targets reached within ${{d}} days</div>
         <div class="ac-stat"><span class="ac-stat-l">Predictions tracked</span>
@@ -4579,10 +4577,11 @@ fetch(`/api/accuracy?days=${{currentDays}}`)
     cards += '</div>';
 
     // ── By consensus ──
+    const periodLabel = PERIODS.find(p => p.days === currentDays)?.label || (currentDays+'d');
     let byConsensus = '';
     if (data.by_consensus.length > 0) {{
       byConsensus = `<div class="ac-section">
-        <h2>ACCURACY BY CONSENSUS RATING (90-DAY)</h2>
+        <h2>ACCURACY BY CONSENSUS RATING (${{periodLabel.toUpperCase()}})</h2>
         <table class="ac-table">
           <thead><tr>
             <th>CONSENSUS</th><th>STOCKS</th><th>HIT RATE</th><th>AVG RETURN</th>
@@ -4604,7 +4603,7 @@ fetch(`/api/accuracy?days=${{currentDays}}`)
     let bySector = '';
     if (data.by_sector.length > 0) {{
       bySector = `<div class="ac-section">
-        <h2>ACCURACY BY SECTOR (90-DAY)</h2>
+        <h2>ACCURACY BY SECTOR (${{periodLabel.toUpperCase()}})</h2>
         <table class="ac-table">
           <thead><tr>
             <th>SECTOR</th><th>STOCKS</th><th>HIT RATE</th><th>AVG RETURN</th>
