@@ -1417,7 +1417,7 @@ function renderAll(data) {{
   }});
 }}
 
-fetch(`/api/accuracy?days=${currentDays}`)
+fetch(`/api/accuracy?days=${{currentDays}}`)
   .then(r => r.json())
   .then(data => renderAll(data))
   .catch(() => {{
@@ -4524,7 +4524,7 @@ def render_accuracy_page() -> str:
 </footer>
 
 <script>
-fetch(`/api/accuracy?days=${currentDays}`)
+fetch(`/api/accuracy?days=${{currentDays}}`)
   .then(r => r.json())
   .then(data => {{
     const el = document.getElementById('ac-content');
