@@ -750,7 +750,6 @@ def get_momentum(ticker: str, current_consensus: str, current_count: int) -> dic
                 "consensus": row[0], "analyst_count": row[1], "date": row[2],
                 "score": CONSENSUS_SCORE.get(row[0], 3),
             }
-    con.close()
 
     current_score = CONSENSUS_SCORE.get(current_consensus, 3)
     trend = "neutral"
@@ -788,6 +787,31 @@ def get_momentum(ticker: str, current_consensus: str, current_count: int) -> dic
         elif 7 in history and history[7]["score"] < current_score:
             streak = 7
 
+    # Analyst call activity: catch cases where aggregate consensus
+    # is unchanged but individual firms have recently downgraded.
+    try:
+        cutoff_30 = (today - datetime.timedelta(days=30)).isoformat()
+        recent = con.execute(
+            "SELECT action FROM analyst_calls"
+            " WHERE ticker = ? AND grade_date >= ? AND action IN ('up','down')",
+            (ticker, cutoff_30)).fetchall()
+        if recent:
+            ups   = sum(1 for r in recent if r[0] == 'up')
+            downs = sum(1 for r in recent if r[0] == 'down')
+            if downs >= 2 and downs > ups and trend == "neutral":
+                trend = "down"
+                trend_detail = f"{downs} downgrade(s) in last 30 days"
+            elif ups >= 2 and ups > downs and trend == "neutral":
+                trend = "up"
+                trend_detail = f"{ups} upgrade(s) in last 30 days"
+            elif downs >= 2 and downs > ups and trend == "up":
+                trend_detail += f" (but {downs} recent downgrades)"
+            elif ups >= 2 and ups > downs and trend == "down":
+                trend_detail += f" (but {ups} recent upgrades)"
+    except Exception:
+        pass
+
+    con.close()
     return {"trend": trend, "trend_detail": trend_detail,
             "score_delta": score_delta, "streak_days": streak,
             "history": {str(k): v for k, v in history.items()}}
