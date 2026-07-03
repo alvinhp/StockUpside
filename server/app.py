@@ -4530,7 +4530,7 @@ fetch(`/api/accuracy?days=${{currentDays}}`)
     const el = document.getElementById('ac-content');
     const cp = data.checkpoints;
     const PERIODS = [{{days:30,label:'1 Month'}},{{days:90,label:'3 Months'}},{{days:180,label:'6 Months'}},{{days:365,label:'1 Year'}},{{days:730,label:'2 Years'}}];
-    const hasData = PERIODS.some(p => cp[p.days] && cp[p.days].total > 0);
+    const hasData = PERIODS.some(p => cp[String(p.days)] && cp[String(p.days)].total > 0);
 
     if (!hasData) {{
         const started = data.collection_started;
@@ -4549,7 +4549,7 @@ fetch(`/api/accuracy?days=${{currentDays}}`)
     // ── Checkpoint cards ──
     let cards = '<div class="ac-grid">';
     for (const {{days: d, label: lbl}} of PERIODS) {{
-      const c = cp[d];
+      const c = cp[String(d)];
       if (!c || c.total === 0) {{
         cards += `<div class="ac-card">
           <div class="ac-card-title">${{lbl.toUpperCase()}} ACCURACY</div>
@@ -4577,7 +4577,7 @@ fetch(`/api/accuracy?days=${{currentDays}}`)
     cards += '</div>';
 
     // ── By consensus ──
-    const periodLabel = PERIODS.find(p => p.days === currentDays)?.label || (currentDays+'d');
+    const periodLabel = PERIODS.find(p => String(p.days) === String(currentDays))?.label || (currentDays+'d');
     let byConsensus = '';
     if (data.by_consensus.length > 0) {{
       byConsensus = `<div class="ac-section">
@@ -5426,7 +5426,7 @@ def api_stock_history(ticker: str):
 
         row = con.execute("""
             SELECT date, rank, current_price, target_price, upside_pct,
-                   consensus, analyst_count
+                   consensus, analyst_count, source
             FROM snapshots
             WHERE ticker=? AND date BETWEEN ? AND ?
             ORDER BY ABS(julianday(date) - julianday(?)) ASC
@@ -5436,7 +5436,7 @@ def api_stock_history(ticker: str):
         if not row:
             continue
 
-        snap_date, rank, price, target, upside, consensus, analyst_count = row
+        snap_date, rank, price, target, upside, consensus, analyst_count, source = row
 
         # Compute deltas vs today so the frontend can highlight changes
         today_price  = today_stock["current_price"]
@@ -5482,6 +5482,7 @@ def api_stock_history(ticker: str):
             "rank_change":       rank_change,
             "analyst_change":    analyst_change,
             "consensus_changed": consensus != today_cons,
+            "is_backfill": source == "backfill",
         })
 
     con.close()
@@ -5875,7 +5876,7 @@ def _render_analyst_calls(ticker: str) -> str:
     accumulate and resolve enough 90-day outcomes to be meaningful."""
     con = get_db()
     calls = con.execute("""
-        SELECT firm, grade_date, from_grade, to_grade, action
+        SELECT firm, grade_date, from_grade, to_grade, action, price_at_call
         FROM analyst_calls
         WHERE ticker = ?
         ORDER BY grade_date DESC
@@ -5886,8 +5887,13 @@ def _render_analyst_calls(ticker: str) -> str:
         con.close()
         return ""
 
+    # Get current stock price for "price at call -> now" display
+    stocks = get_stocks_cached()
+    stock_map = {s["ticker"]: s for s in stocks}
+    current_price = stock_map.get(ticker, {}).get("current_price")
+
     rows_html = ""
-    for firm, grade_date, from_grade, to_grade, action in calls:
+    for firm, grade_date, from_grade, to_grade, action, price_at_call in calls:
         track = con.execute("""
             SELECT COUNT(*), SUM(o.was_correct)
             FROM analyst_call_outcomes o
@@ -5908,6 +5914,17 @@ def _render_analyst_calls(ticker: str) -> str:
         firm_safe = escape(firm)
         grade_safe = escape(f"{from_grade} → {to_grade}" if from_grade else to_grade)
 
+        # Price at call -> current price
+        if price_at_call and current_price:
+            pct = round((current_price - price_at_call) / price_at_call * 100, 1)
+            pct_str = f"+{pct}%" if pct >= 0 else f"{pct}%"
+            pct_color = "var(--green)" if pct >= 0 else "var(--red)"
+            price_html = (f'<span class="ac-price-change">'
+                          f'${price_at_call:.0f} → ${current_price:.0f} '
+                          f'<span style="color:{pct_color}">({pct_str})</span></span>')
+        else:
+            price_html = ""
+
         rows_html += f"""
         <div class="ac-row">
           <div class="ac-row-top">
@@ -5917,6 +5934,9 @@ def _render_analyst_calls(ticker: str) -> str:
           <div class="ac-row-bottom">
             <span class="ac-grade">{grade_safe}</span>
             <span class="ac-date">{grade_date}</span>
+          </div>
+          <div class="ac-row-meta">
+            {price_html}
             {track_html}
           </div>
         </div>"""
@@ -6099,6 +6119,9 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
                     color: var(--text3); margin-bottom: 4px; }}
     .sp-calls-sub {{ font-size: 12px; color: var(--text2); margin-bottom: 16px; }}
     .sp-calls-sub a {{ color: var(--accent); text-decoration: none; }}
+    .ac-row-meta {{ display:flex; align-items:center; justify-content:space-between;
+                    margin-top:4px; gap:8px; }}
+    .ac-price-change {{ font-family:var(--font-mono); font-size:11px; color:var(--text2); }}
     .ac-list {{ display: flex; flex-direction: column; gap: 1px; background: var(--border); }}
     .ac-row {{ background: var(--bg2); padding: 12px 14px; }}
     .ac-row-top {{ display: flex; justify-content: space-between; align-items: baseline;
@@ -6456,10 +6479,12 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
           <div class="sp-hist-col">
             <div class="sp-hist-colhead">CHANGE SINCE THEN</div>
             <div class="sp-stat"><span class="sp-stat-l">Price</span><span class="sp-stat-v" style="color:${{priceColor}}">${{p.price_change_pct != null ? priceSign + p.price_change_pct + "%" : "—"}}</span></div>
-            <div class="sp-stat"><span class="sp-stat-l">Target</span><span class="sp-stat-v" style="color:${{p.target_change_pct != null ? (p.target_change_pct > 0 ? "#00e676" : p.target_change_pct < 0 ? "#ff5252" : "var(--text2)") : "var(--text3)"}}">${{p.target_change_pct != null ? (p.target_change_pct >= 0 ? "+" : "") + p.target_change_pct + "%" : "—"}}</span></div>
+            ${{p.is_backfill
+              ? '<div class="sp-stat"><span class="sp-stat-l">Target</span><span class="sp-stat-v" style="color:var(--text3)" title="Historical targets not available for backfilled data">N/A</span></div>'
+              : '<div class="sp-stat"><span class="sp-stat-l">Target</span><span class="sp-stat-v" style="color:' + (p.target_change_pct != null ? (p.target_change_pct > 0 ? "#00e676" : p.target_change_pct < 0 ? "#ff5252" : "var(--text2)") : "var(--text3)") + '">' + (p.target_change_pct != null ? (p.target_change_pct >= 0 ? "+" : "") + p.target_change_pct + "%" : "—") + '</span></div>'}}
             <div class="sp-stat"><span class="sp-stat-l">Upside</span><span class="sp-stat-v" style="color:${{upsideColor}}">${{p.upside_change != null ? upsideSign + p.upside_change + "pp" : "—"}}</span></div>
             <div class="sp-stat"><span class="sp-stat-l">Consensus</span><span class="sp-stat-v">${{p.consensus_changed ? '<span style="color:#ffd740">Changed</span>' : '<span style="color:var(--text3)">Unchanged</span>'}}</span></div>
-            <div class="sp-stat"><span class="sp-stat-l">Analysts</span><span class="sp-stat-v" style="color:${{p.analyst_change != null ? (p.analyst_change > 0 ? "#00e676" : p.analyst_change < 0 ? "#ff5252" : "var(--text2)") : "var(--text3)"}}">${{p.analyst_change != null ? (p.analyst_change > 0 ? "+" : "") + p.analyst_change : "—"}}</span></div>
+            <div class="sp-stat"><span class="sp-stat-l">Analysts</span><span class="sp-stat-v" style="color:var(--text3)">${{p.is_backfill ? "N/A" : (p.analyst_change != null ? (p.analyst_change > 0 ? "+" : "") + p.analyst_change : "—")}}</span></div>
             <div class="sp-stat"><span class="sp-stat-l">Rank</span><span class="sp-stat-v" style="color:${{rankColor}}">${{p.rank_change != null ? rankSign + p.rank_change + " " + rankNote : "—"}}</span></div>
           </div>
         </div>`;
