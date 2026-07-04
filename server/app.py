@@ -199,14 +199,7 @@ def send_digest_job():
 
     sent = 0
     for addr, plan in subs:
-        if plan == "pro":
-            prefs = get_email_prefs(addr)
-        else:
-            # Free users haven't set custom filters, but passing None
-            # caused digest_email_html to use the raw ranked list — which
-            # puts penny stocks with a single analyst at the top. Apply a
-            # sensible baseline so free digests are actually useful.
-            prefs = dict(FREE_DEFAULT_EMAIL_PREFS)
+        prefs = get_email_prefs(addr) if plan == "pro" else None
         subj, html, text = digest_email_html(stocks, addr, prefs=prefs)
         if send_email(addr, subj, html, text):
             sent += 1
@@ -697,7 +690,7 @@ def set_generating(val: bool):
     with _generating_lock:
         _generating = val
 
-CHECKPOINTS = [30, 90, 180, 365, 730]
+CHECKPOINTS = [30, 60, 90]
 
 def check_performance():
     """
@@ -818,13 +811,7 @@ def init_db():
         upside_pct REAL,
         consensus TEXT,
         analyst_count INTEGER,
-        source TEXT,
         UNIQUE(date, ticker))""")
-
-    # One-time migration: add source column for DBs created before backfill support
-    _snap_cols = [r[1] for r in con.execute("PRAGMA table_info(snapshots)").fetchall()]
-    if "source" not in _snap_cols:
-        con.execute("ALTER TABLE snapshots ADD COLUMN source TEXT")
 
     # Price lookups added later when we check performance
     con.execute("""CREATE TABLE IF NOT EXISTS performance(
@@ -1206,7 +1193,6 @@ def render_analyst_track_record() -> str:
   <div>© {yr} StockUpside.io · Not financial advice</div>
   <div class="ftr-r">
     <a href="/accuracy">Accuracy</a> ·
-    <a href="/firm-track-record">Firm Rankings</a> 
     <a href="/changes">Changes</a> ·
     <a href="/stocks">All Stocks</a>
   </div>
@@ -1226,7 +1212,7 @@ function retColor(r) {{
 }}
 
 function renderSummaryCards(data) {{
-  const cp = data.checkpoints[currentDays] || {{}};
+  const cp = data.checkpoints[30] || {{}};
   if (!cp.total) return `
     <div class="no-data-card">
       <div class="no-data-icon">⏳</div>
@@ -1245,12 +1231,12 @@ function renderSummaryCards(data) {{
   return `
     <div class="atr-cards">
       <div class="atr-card">
-        <div class="atr-card-lbl">HIT RATE (${{currentDays}}D)</div>
+        <div class="atr-card-lbl">HIT RATE ({30}D)</div>
         <div class="atr-card-val" style="color:${{col}}">${{cp.hit_rate}}%</div>
         <div class="atr-card-sub">of targets reached</div>
       </div>
       <div class="atr-card">
-        <div class="atr-card-lbl">PREDICTIONS TRACKED</div>
+        <div class="atr-card-lbl">STOCKS TRACKED</div>
         <div class="atr-card-val">${{cp.total}}</div>
         <div class="atr-card-sub">${{cp.hits}} targets hit</div>
       </div>
@@ -1275,7 +1261,7 @@ function renderByConsensus(data) {{
   if (!data.by_consensus.length) return '';
   return `
     <div class="atr-section">
-      <div class="atr-section-title">ACCURACY BY CONSENSUS RATING (${{currentDays}}-DAY)</div>
+      <div class="atr-section-title">ACCURACY BY CONSENSUS RATING ({30}-DAY)</div>
       <table class="atr-table">
         <thead><tr>
           <th>RATING</th>
@@ -1394,11 +1380,9 @@ function renderAll(data) {{
   
   const tabsHtml = `
     <div class="atr-tabs" style="margin-bottom:28px">
-      <button class="atr-tab ${{currentDays===30?'active':''}}" data-days="30">1 Month</button>
-      <button class="atr-tab ${{currentDays===90?'active':''}}" data-days="90">3 Months</button>
-      <button class="atr-tab ${{currentDays===180?'active':''}}" data-days="180">6 Months</button>
-      <button class="atr-tab ${{currentDays===365?'active':''}}" data-days="365">1 Year</button>
-      <button class="atr-tab ${{currentDays===730?'active':''}}" data-days="730">2 Years</button>
+      <button class="atr-tab ${{30===30?'active':''}}" data-days="30">30 Days</button>
+      <button class="atr-tab ${{30===60?'active':''}}" data-days="60">60 Days</button>
+      <button class="atr-tab ${{30===90?'active':''}}" data-days="90">90 Days</button>
     </div>`;
 
   document.getElementById('atr-content').innerHTML =
@@ -1411,13 +1395,13 @@ function renderAll(data) {{
   // Bind tabs
   document.querySelectorAll('.atr-tab').forEach(btn => {{
     btn.addEventListener('click', () => {{
-      currentDays = parseInt(btn.dataset.days);
+      30 = parseInt(btn.dataset.days);
       renderAll(data);
     }});
   }});
 }}
 
-fetch(`/api/accuracy?days=${{currentDays}}`)
+fetch('/api/accuracy')
   .then(r => r.json())
   .then(data => renderAll(data))
   .catch(() => {{
@@ -1552,7 +1536,6 @@ def render_changes_page(mode: str) -> str:
 <footer class="ftr">
   <div>© {yr} StockUpside.io · Updated nightly · Not financial advice</div>
   <div class="ftr-r">
-    <a href="/analyst-track-record">Track Record</a> ·
     <a href="/changes">Changes</a> ·
     <a href="/accuracy">Accuracy</a> ·
     <a href="/stocks">All Stocks</a>
@@ -1832,21 +1815,6 @@ DEFAULT_EMAIL_PREFS = {
     "max_pe": 0, "max_peg": 0, "momentum": "All",
 }
 
-# Baseline filter applied to free-tier digest emails.
-# Free users haven't configured custom filters, but sending the raw
-# top-20 overall produces a misleading list — rank #1 is typically a
-# penny stock with a single analyst and a 60,000% target, which has
-# no practical value. These defaults mirror a reasonable free-user
-# experience: at least 2 analysts covering the stock (so a single
-# outlier call can't dominate), and consensus must be Buy or Strong Buy
-# (so the email isn't just a list of speculative micro-caps no analyst
-# actually recommends). Market cap is intentionally left at 0 so the
-# email still surfaces small-caps with genuine analyst coverage.
-FREE_DEFAULT_EMAIL_PREFS = {
-    "sector": "All", "consensus": "Buy", "min_analysts": 2,
-    "max_pe": 0, "max_peg": 0, "momentum": "All",
-}
-
 def get_email_prefs(email_addr: str) -> dict:
     """Return saved digest filter preferences for a subscriber, or the
     defaults (no filters, top-10 overall) if none have been saved."""
@@ -1902,14 +1870,7 @@ def apply_email_filters(stocks: list, prefs: dict, limit: int = 10) -> list:
 
     consensus = prefs.get("consensus", "All")
     if consensus and consensus != "All":
-        # "Buy" in the filter means "Buy or better" (i.e. include Strong Buy),
-        # matching how the frontend's consensus filter works. Without this,
-        # FREE_DEFAULT_EMAIL_PREFS with consensus="Buy" would exclude Strong Buy
-        # stocks entirely — the opposite of what's wanted.
-        if consensus == "Buy":
-            s = [x for x in s if x.get("consensus") in ("Buy", "Strong Buy")]
-        else:
-            s = [x for x in s if x.get("consensus") == consensus]
+        s = [x for x in s if x.get("consensus") == consensus]
 
     min_analysts = int(prefs.get("min_analysts", 0) or 0)
     if min_analysts > 0:
@@ -2159,29 +2120,13 @@ def digest_email_html(stocks: list, email_addr: str, prefs: dict | None = None) 
     """
     today      = datetime.date.today().strftime("%B %d, %Y")
     unsub      = _unsubscribe_url(email_addr)
+    is_custom  = bool(prefs) and prefs != DEFAULT_EMAIL_PREFS
 
-    # prefs is always provided now (free users get FREE_DEFAULT_EMAIL_PREFS,
-    # pro users get their saved preferences or DEFAULT_EMAIL_PREFS).
-    # is_custom is True only when a pro user has diverged from the plain
-    # defaults — free users using FREE_DEFAULT_EMAIL_PREFS should never
-    # trigger the "YOUR TOP 10" personalised subject line.
-    effective_prefs = prefs if prefs else dict(FREE_DEFAULT_EMAIL_PREFS)
-    is_custom = (bool(prefs)
-                 and prefs != DEFAULT_EMAIL_PREFS
-                 and prefs != FREE_DEFAULT_EMAIL_PREFS)
-
-    picks = apply_email_filters(stocks, effective_prefs, limit=20)
+    picks = apply_email_filters(stocks, prefs, limit=10) if prefs else None
     fell_back = False
     if not picks:
-        # Custom pro filters returned nothing — fall back to the free
-        # baseline rather than the raw unfiltered list, so even the
-        # fallback email shows quality stocks.
-        picks = apply_email_filters(stocks, FREE_DEFAULT_EMAIL_PREFS, limit=20)
+        picks     = [s for s in stocks if not s.get("locked")][:20]
         fell_back = is_custom
-    if not picks:
-        # Absolute last resort: truly nothing passes even the baseline.
-        picks = [s for s in stocks if not s.get("locked")][:20]
-        fell_back = True
 
     rows_html = ""
     rows_txt  = ""
@@ -4508,7 +4453,7 @@ def render_accuracy_page() -> str:
   <h1>Analyst Accuracy Tracker</h1>
   <p class="ac-sub">
     How often do Wall Street price targets actually come true?
-    We track every prediction in our database and measure real outcomes at 1 month, 3 months, 6 months, 1 year, and 2 years.
+    We track every prediction in our database and measure real outcomes at 30, 60, and 90 days.
   </p>
 
   <div id="ac-content">
@@ -4524,104 +4469,128 @@ def render_accuracy_page() -> str:
 </footer>
 
 <script>
+let currentDays = 30;
+
 fetch(`/api/accuracy?days=${{currentDays}}`)
   .then(r => r.json())
   .then(data => {{
     const el = document.getElementById('ac-content');
-    const cp = data.checkpoints;
-    const PERIODS = [{{days:30,label:'1 Month'}},{{days:90,label:'3 Months'}},{{days:180,label:'6 Months'}},{{days:365,label:'1 Year'}},{{days:730,label:'2 Years'}}];
+    const cp = data.checkpoints || {{}};
+    const PERIODS = [
+      {{days:30,  label:'1 Month'}},
+      {{days:90,  label:'3 Months'}},
+      {{days:180, label:'6 Months'}},
+      {{days:365, label:'1 Year'}},
+      {{days:730, label:'2 Years'}},
+    ];
     const hasData = PERIODS.some(p => cp[String(p.days)] && cp[String(p.days)].total > 0);
 
     if (!hasData) {{
-        const started = data.collection_started;
-        if (started) {{
-            const d    = new Date(started + "T00:00:00");
-            const fmt  = d.toLocaleDateString("en-US", {{ month: "long", day: "numeric", year: "numeric" }});
-            const due  = new Date(d); due.setDate(due.getDate() + 30);
-            const dueFmt = due.toLocaleDateString("en-US", {{ month: "long", day: "numeric" }});
-            el.innerHTML = `<div class="no-data">
-                No accuracy data yet for this period. Try '1 Month' or '3 Months' - data builds up over time.
-            </div>`;
-        }}
-        return;
+      el.innerHTML = `<div class="no-data">
+        No accuracy data yet. Try a shorter window (1 Month or 3 Months) —
+        data builds up over time as snapshots accumulate.
+      </div>`;
+      return;
     }}
 
-    // ── Checkpoint cards ──
-    let cards = '<div class="ac-grid">';
-    for (const {{days: d, label: lbl}} of PERIODS) {{
-      const c = cp[String(d)];
-      if (!c || c.total === 0) {{
+    function renderAll() {{
+      const tabsHtml = `<div style="display:flex;gap:0;margin-bottom:28px;
+          border:1px solid var(--border);border-radius:6px;overflow:hidden;width:fit-content">
+        <button onclick="setDays(30)"  class="ac-tab" data-days="30"  style="padding:8px 18px;font-family:var(--font-mono);font-size:11px;font-weight:600;cursor:pointer;border:none;background:${{currentDays===30?'var(--accent)':'var(--bg2)'}};color:${{currentDays===30?'#000':'var(--text2)'}};transition:all .15s">1 Month</button>
+        <button onclick="setDays(90)"  class="ac-tab" data-days="90"  style="padding:8px 18px;font-family:var(--font-mono);font-size:11px;font-weight:600;cursor:pointer;border:none;background:${{currentDays===90?'var(--accent)':'var(--bg2)'}};color:${{currentDays===90?'#000':'var(--text2)'}};transition:all .15s">3 Months</button>
+        <button onclick="setDays(180)" class="ac-tab" data-days="180" style="padding:8px 18px;font-family:var(--font-mono);font-size:11px;font-weight:600;cursor:pointer;border:none;background:${{currentDays===180?'var(--accent)':'var(--bg2)'}};color:${{currentDays===180?'#000':'var(--text2)'}};transition:all .15s">6 Months</button>
+        <button onclick="setDays(365)" class="ac-tab" data-days="365" style="padding:8px 18px;font-family:var(--font-mono);font-size:11px;font-weight:600;cursor:pointer;border:none;background:${{currentDays===365?'var(--accent)':'var(--bg2)'}};color:${{currentDays===365?'#000':'var(--text2)'}};transition:all .15s">1 Year</button>
+        <button onclick="setDays(730)" class="ac-tab" data-days="730" style="padding:8px 18px;font-family:var(--font-mono);font-size:11px;font-weight:600;cursor:pointer;border:none;background:${{currentDays===730?'var(--accent)':'var(--bg2)'}};color:${{currentDays===730?'#000':'var(--text2)'}};transition:all .15s">2 Years</button>
+      </div>`;
+
+      // Cards for all periods
+      let cards = '<div class="ac-grid">';
+      for (const {{days: d, label: lbl}} of PERIODS) {{
+        const c = cp[String(d)];
+        if (!c || c.total === 0) {{
+          cards += `<div class="ac-card">
+            <div class="ac-card-title">${{lbl.toUpperCase()}} ACCURACY</div>
+            <div style="color:var(--text3);font-size:12px">No data yet</div>
+          </div>`;
+          continue;
+        }}
+        const col = c.hit_rate >= 60 ? '#00e676' : c.hit_rate >= 40 ? '#ffd740' : '#f85149';
         cards += `<div class="ac-card">
           <div class="ac-card-title">${{lbl.toUpperCase()}} ACCURACY</div>
-          <div style="color:var(--text3);font-size:12px">No data yet</div>
+          <div class="ac-big" style="color:${{col}}">${{c.hit_rate}}%</div>
+          <div class="ac-big-sub">of targets reached within ${{d}} days</div>
+          <div class="ac-stat"><span class="ac-stat-l">Predictions tracked</span>
+            <span class="ac-stat-v">${{c.total}}</span></div>
+          <div class="ac-stat"><span class="ac-stat-l">Targets hit</span>
+            <span class="ac-stat-v">${{c.hits}}</span></div>
+          <div class="ac-stat"><span class="ac-stat-l">Avg return (all)</span>
+            <span class="ac-stat-v" style="color:${{c.avg_return>=0?'#69f0ae':'#f85149'}}">
+              ${{c.avg_return>=0?'+':''}}${{c.avg_return}}%</span></div>
+          <div class="ac-stat"><span class="ac-stat-l">Avg return (hits)</span>
+            <span class="ac-stat-v" style="color:#69f0ae">+${{c.avg_return_hits}}%</span></div>
         </div>`;
-        continue;
       }}
-      const col = c.hit_rate >= 60 ? '#00e676' : c.hit_rate >= 40 ? '#ffd740' : '#f85149';
-      cards += `<div class="ac-card">
-        <div class="ac-card-title">${{lbl.toUpperCase()}} ACCURACY</div>
-        <div class="ac-big" style="color:${{col}}">${{c.hit_rate}}%</div>
-        <div class="ac-big-sub">of targets reached within ${{d}} days</div>
-        <div class="ac-stat"><span class="ac-stat-l">Predictions tracked</span>
-          <span class="ac-stat-v">${{c.total}}</span></div>
-        <div class="ac-stat"><span class="ac-stat-l">Targets hit</span>
-          <span class="ac-stat-v">${{c.hits}}</span></div>
-        <div class="ac-stat"><span class="ac-stat-l">Avg return (all)</span>
-          <span class="ac-stat-v" style="color:${{c.avg_return>=0?'#69f0ae':'#f85149'}}">
-            ${{c.avg_return>=0?'+':''}}${{c.avg_return}}%</span></div>
-        <div class="ac-stat"><span class="ac-stat-l">Avg return (hits)</span>
-          <span class="ac-stat-v" style="color:#69f0ae">
-            +${{c.avg_return_hits}}%</span></div>
-      </div>`;
-    }}
-    cards += '</div>';
+      cards += '</div>';
 
-    // ── By consensus ──
-    const periodLabel = PERIODS.find(p => String(p.days) === String(currentDays))?.label || (currentDays+'d');
-    let byConsensus = '';
-    if (data.by_consensus.length > 0) {{
-      byConsensus = `<div class="ac-section">
-        <h2>ACCURACY BY CONSENSUS RATING (${{periodLabel.toUpperCase()}})</h2>
-        <table class="ac-table">
-          <thead><tr>
-            <th>CONSENSUS</th><th>STOCKS</th><th>HIT RATE</th><th>AVG RETURN</th>
-          </tr></thead>
-          <tbody>
-            ${{data.by_consensus.map(r => `<tr>
-              <td style="color:${{ratingColor(r.consensus)}}">${{r.consensus}}</td>
-              <td>${{r.total}}</td>
-              <td>${{r.hit_rate}}%</td>
-              <td style="color:${{r.avg_return>=0?'#69f0ae':'#f85149'}}">
-                ${{r.avg_return>=0?'+':''}}${{r.avg_return}}%</td>
-            </tr>`).join('')}}
-          </tbody>
-        </table>
-      </div>`;
-    }}
+      // By consensus / sector use currentDays
+      const periodLabel = PERIODS.find(p => p.days === currentDays)?.label || (currentDays + 'd');
 
-    // ── By sector ──
-    let bySector = '';
-    if (data.by_sector.length > 0) {{
-      bySector = `<div class="ac-section">
-        <h2>ACCURACY BY SECTOR (${{periodLabel.toUpperCase()}})</h2>
-        <table class="ac-table">
-          <thead><tr>
-            <th>SECTOR</th><th>STOCKS</th><th>HIT RATE</th><th>AVG RETURN</th>
-          </tr></thead>
-          <tbody>
-            ${{data.by_sector.map(r => `<tr>
-              <td>${{r.sector}}</td>
-              <td>${{r.total}}</td>
-              <td>${{r.hit_rate}}%</td>
-              <td style="color:${{r.avg_return>=0?'#69f0ae':'#f85149'}}">
-                ${{r.avg_return>=0?'+':''}}${{r.avg_return}}%</td>
-            </tr>`).join('')}}
-          </tbody>
-        </table>
-      </div>`;
+      let byConsensus = '';
+      if (data.by_consensus && data.by_consensus.length > 0) {{
+        byConsensus = `<div class="ac-section">
+          <h2>ACCURACY BY CONSENSUS RATING (${{periodLabel.toUpperCase()}})</h2>
+          <table class="ac-table">
+            <thead><tr><th>CONSENSUS</th><th>PREDICTIONS</th><th>HIT RATE</th><th>AVG RETURN</th></tr></thead>
+            <tbody>
+              ${{data.by_consensus.map(r => `<tr>
+                <td style="color:${{ratingColor(r.consensus)}}">${{r.consensus}}</td>
+                <td>${{r.total}}</td>
+                <td>${{r.hit_rate}}%</td>
+                <td style="color:${{r.avg_return>=0?'#69f0ae':'#f85149'}}">${{r.avg_return>=0?'+':''}}${{r.avg_return}}%</td>
+              </tr>`).join('')}}
+            </tbody>
+          </table>
+        </div>`;
+      }}
+
+      let bySector = '';
+      if (data.by_sector && data.by_sector.length > 0) {{
+        bySector = `<div class="ac-section">
+          <h2>ACCURACY BY SECTOR (${{periodLabel.toUpperCase()}})</h2>
+          <table class="ac-table">
+            <thead><tr><th>SECTOR</th><th>PREDICTIONS</th><th>HIT RATE</th><th>AVG RETURN</th></tr></thead>
+            <tbody>
+              ${{data.by_sector.map(r => `<tr>
+                <td>${{r.sector}}</td>
+                <td>${{r.total}}</td>
+                <td>${{r.hit_rate}}%</td>
+                <td style="color:${{r.avg_return>=0?'#69f0ae':'#f85149'}}">${{r.avg_return>=0?'+':''}}${{r.avg_return}}%</td>
+              </tr>`).join('')}}
+            </tbody>
+          </table>
+        </div>`;
+      }}
+
+      el.innerHTML = tabsHtml + cards + byConsensus + bySector;
     }}
 
-    el.innerHTML = cards + byConsensus + bySector;
+    function setDays(d) {{
+      currentDays = d;
+      // Re-fetch so by_consensus and by_sector update for the selected period
+      fetch(`/api/accuracy?days=${{d}}`)
+        .then(r => r.json())
+        .then(fresh => {{
+          data.by_consensus = fresh.by_consensus;
+          data.by_sector    = fresh.by_sector;
+          renderAll();
+        }});
+    }}
+
+    renderAll();
+  }})
+  .catch(() => {{
+    document.getElementById('ac-content').innerHTML =
+      '<div class="no-data">Failed to load accuracy data. Please try again.</div>';
   }});
 
 function ratingColor(c) {{
@@ -5426,7 +5395,7 @@ def api_stock_history(ticker: str):
 
         row = con.execute("""
             SELECT date, rank, current_price, target_price, upside_pct,
-                   consensus, analyst_count, source
+                   consensus, analyst_count
             FROM snapshots
             WHERE ticker=? AND date BETWEEN ? AND ?
             ORDER BY ABS(julianday(date) - julianday(?)) ASC
@@ -5436,7 +5405,7 @@ def api_stock_history(ticker: str):
         if not row:
             continue
 
-        snap_date, rank, price, target, upside, consensus, analyst_count, source = row
+        snap_date, rank, price, target, upside, consensus, analyst_count = row
 
         # Compute deltas vs today so the frontend can highlight changes
         today_price  = today_stock["current_price"]
@@ -5482,7 +5451,6 @@ def api_stock_history(ticker: str):
             "rank_change":       rank_change,
             "analyst_change":    analyst_change,
             "consensus_changed": consensus != today_cons,
-            "is_backfill": source == "backfill",
         })
 
     con.close()
@@ -5534,10 +5502,6 @@ def api_stock_calls(ticker):
 @app.route("/api/accuracy")
 @limiter.limit("600 per hour")
 def api_accuracy():
-    from flask import request as _req
-    days_filter = int(_req.args.get("days", 90))
-    if days_filter not in (30, 90, 180, 365, 730):
-        days_filter = 90
     con = get_db()   # use get_db(), not sqlite3.connect directly
 
     # Overall hit rate per checkpoint
@@ -5582,10 +5546,10 @@ def api_accuracy():
                AVG(p.actual_return) as avg_return
         FROM performance p
         JOIN snapshots s ON s.ticker = p.ticker AND s.date = p.snapshot_date
-        WHERE p.days_later = ?
+        WHERE p.days_later = 90
         GROUP BY s.consensus
         ORDER BY avg_return DESC
-    """, (days_filter,)).fetchall()
+    """).fetchall()
 
     # Accuracy by sector — snapshots has no sector column, so pull it from
     # the cached stock data instead
@@ -5596,8 +5560,8 @@ def api_accuracy():
     perf_rows = con.execute("""
         SELECT p.ticker, p.hit_target, p.actual_return
         FROM performance p
-        WHERE p.days_later = ?
-    """, (days_filter,)).fetchall()
+        WHERE p.days_later = 90
+    """).fetchall()
 
     for ticker, hit, ret in perf_rows:
         sector = sector_map.get(ticker, "Unknown")
@@ -5876,7 +5840,7 @@ def _render_analyst_calls(ticker: str) -> str:
     accumulate and resolve enough 90-day outcomes to be meaningful."""
     con = get_db()
     calls = con.execute("""
-        SELECT firm, grade_date, from_grade, to_grade, action, price_at_call
+        SELECT firm, grade_date, from_grade, to_grade, action
         FROM analyst_calls
         WHERE ticker = ?
         ORDER BY grade_date DESC
@@ -5887,13 +5851,8 @@ def _render_analyst_calls(ticker: str) -> str:
         con.close()
         return ""
 
-    # Get current stock price for "price at call -> now" display
-    stocks = get_stocks_cached()
-    stock_map = {s["ticker"]: s for s in stocks}
-    current_price = stock_map.get(ticker, {}).get("current_price")
-
     rows_html = ""
-    for firm, grade_date, from_grade, to_grade, action, price_at_call in calls:
+    for firm, grade_date, from_grade, to_grade, action in calls:
         track = con.execute("""
             SELECT COUNT(*), SUM(o.was_correct)
             FROM analyst_call_outcomes o
@@ -5914,17 +5873,6 @@ def _render_analyst_calls(ticker: str) -> str:
         firm_safe = escape(firm)
         grade_safe = escape(f"{from_grade} → {to_grade}" if from_grade else to_grade)
 
-        # Price at call -> current price
-        if price_at_call and current_price:
-            pct = round((current_price - price_at_call) / price_at_call * 100, 1)
-            pct_str = f"+{pct}%" if pct >= 0 else f"{pct}%"
-            pct_color = "var(--green)" if pct >= 0 else "var(--red)"
-            price_html = (f'<span class="ac-price-change">'
-                          f'${price_at_call:.0f} → ${current_price:.0f} '
-                          f'<span style="color:{pct_color}">({pct_str})</span></span>')
-        else:
-            price_html = ""
-
         rows_html += f"""
         <div class="ac-row">
           <div class="ac-row-top">
@@ -5934,9 +5882,6 @@ def _render_analyst_calls(ticker: str) -> str:
           <div class="ac-row-bottom">
             <span class="ac-grade">{grade_safe}</span>
             <span class="ac-date">{grade_date}</span>
-          </div>
-          <div class="ac-row-meta">
-            {price_html}
             {track_html}
           </div>
         </div>"""
@@ -6119,9 +6064,6 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
                     color: var(--text3); margin-bottom: 4px; }}
     .sp-calls-sub {{ font-size: 12px; color: var(--text2); margin-bottom: 16px; }}
     .sp-calls-sub a {{ color: var(--accent); text-decoration: none; }}
-    .ac-row-meta {{ display:flex; align-items:center; justify-content:space-between;
-                    margin-top:4px; gap:8px; }}
-    .ac-price-change {{ font-family:var(--font-mono); font-size:11px; color:var(--text2); }}
     .ac-list {{ display: flex; flex-direction: column; gap: 1px; background: var(--border); }}
     .ac-row {{ background: var(--bg2); padding: 12px 14px; }}
     .ac-row-top {{ display: flex; justify-content: space-between; align-items: baseline;
@@ -6479,12 +6421,10 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
           <div class="sp-hist-col">
             <div class="sp-hist-colhead">CHANGE SINCE THEN</div>
             <div class="sp-stat"><span class="sp-stat-l">Price</span><span class="sp-stat-v" style="color:${{priceColor}}">${{p.price_change_pct != null ? priceSign + p.price_change_pct + "%" : "—"}}</span></div>
-            ${{p.is_backfill
-              ? '<div class="sp-stat"><span class="sp-stat-l">Target</span><span class="sp-stat-v" style="color:var(--text3)" title="Historical targets not available for backfilled data">N/A</span></div>'
-              : '<div class="sp-stat"><span class="sp-stat-l">Target</span><span class="sp-stat-v" style="color:' + (p.target_change_pct != null ? (p.target_change_pct > 0 ? "#00e676" : p.target_change_pct < 0 ? "#ff5252" : "var(--text2)") : "var(--text3)") + '">' + (p.target_change_pct != null ? (p.target_change_pct >= 0 ? "+" : "") + p.target_change_pct + "%" : "—") + '</span></div>'}}
+            <div class="sp-stat"><span class="sp-stat-l">Target</span><span class="sp-stat-v" style="color:${{p.target_change_pct != null ? (p.target_change_pct > 0 ? "#00e676" : p.target_change_pct < 0 ? "#ff5252" : "var(--text2)") : "var(--text3)"}}">${{p.target_change_pct != null ? (p.target_change_pct >= 0 ? "+" : "") + p.target_change_pct + "%" : "—"}}</span></div>
             <div class="sp-stat"><span class="sp-stat-l">Upside</span><span class="sp-stat-v" style="color:${{upsideColor}}">${{p.upside_change != null ? upsideSign + p.upside_change + "pp" : "—"}}</span></div>
             <div class="sp-stat"><span class="sp-stat-l">Consensus</span><span class="sp-stat-v">${{p.consensus_changed ? '<span style="color:#ffd740">Changed</span>' : '<span style="color:var(--text3)">Unchanged</span>'}}</span></div>
-            <div class="sp-stat"><span class="sp-stat-l">Analysts</span><span class="sp-stat-v" style="color:var(--text3)">${{p.is_backfill ? "N/A" : (p.analyst_change != null ? (p.analyst_change > 0 ? "+" : "") + p.analyst_change : "—")}}</span></div>
+            <div class="sp-stat"><span class="sp-stat-l">Analysts</span><span class="sp-stat-v" style="color:${{p.analyst_change != null ? (p.analyst_change > 0 ? "#00e676" : p.analyst_change < 0 ? "#ff5252" : "var(--text2)") : "var(--text3)"}}">${{p.analyst_change != null ? (p.analyst_change > 0 ? "+" : "") + p.analyst_change : "—"}}</span></div>
             <div class="sp-stat"><span class="sp-stat-l">Rank</span><span class="sp-stat-v" style="color:${{rankColor}}">${{p.rank_change != null ? rankSign + p.rank_change + " " + rankNote : "—"}}</span></div>
           </div>
         </div>`;
