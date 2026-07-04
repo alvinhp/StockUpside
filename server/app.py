@@ -1,5 +1,5 @@
 """
-StockUpside.io — Flask Backend
+StockUpside.io - Flask Backend
 Run: python3 server/app.py
 Serves the REST API on :5000 and static files from /public
 """
@@ -21,7 +21,7 @@ import csv
 import io
 import threading
 
-# Load .env file if present — makes env vars work regardless of how Flask
+# Load .env file if present - makes env vars work regardless of how Flask
 # is launched (systemd, nohup, direct python3). Variables already set in
 # the process environment take precedence over .env (override=False), so
 # systemd Environment= directives still win.
@@ -30,7 +30,7 @@ try:
     _env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
     load_dotenv(_env_path, override=False)
 except ImportError:
-    pass  # python-dotenv not installed — env vars must come from the process env
+    pass  # python-dotenv not installed - env vars must come from the process env
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PUBLIC_DIR = os.path.join(BASE_DIR, "public")
@@ -42,7 +42,7 @@ app = Flask(__name__, static_folder=PUBLIC_DIR, static_url_path="")
 # Trust exactly one layer of reverse proxy (Digital Ocean / Nginx) for the
 # X-Forwarded-For and X-Forwarded-Proto headers. Without this, get_remote_address()
 # below sees the proxy's IP for every visitor, so all traffic shares one rate-limit
-# bucket. x_for=1 means "trust one hop" — increase only if you add another proxy
+# bucket. x_for=1 means "trust one hop" - increase only if you add another proxy
 # layer (e.g. a CDN) in front of this one, or it becomes spoofable.
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
 
@@ -51,10 +51,10 @@ limiter = Limiter(get_remote_address, app=app, default_limits=["200 per hour"])
 # Dedicated secret for HMAC-derived tokens (unsubscribe links, etc.) and
 # Flask's own session signing. Set APP_SECRET_KEY in production so tokens
 # and signed cookies survive a restart; falls back to a random per-process
-# value in dev (fine — just means existing unsubscribe links break on restart).
+# value in dev (fine - just means existing unsubscribe links break on restart).
 _APP_SECRET = os.environ.get("APP_SECRET_KEY") or secrets.token_hex(32)
 if not os.environ.get("APP_SECRET_KEY"):
-    print("  ⚠  APP_SECRET_KEY not set — using a random per-process secret. "
+    print("  ⚠  APP_SECRET_KEY not set - using a random per-process secret. "
           "Set APP_SECRET_KEY in production so unsubscribe links don't break on restart.")
 app.secret_key = _APP_SECRET
 
@@ -64,7 +64,7 @@ _cache: dict = {"data": None, "date": None, "ts": None, "checked_at": 0.0}
 
 # How often (seconds) to re-check the DB for a newer row while serving from
 # the in-memory cache. generate.py runs in a SEPARATE PROCESS and checkpoints
-# every ~50 tickers via merge_progress_into_cache() — it has no way to call
+# every ~50 tickers via merge_progress_into_cache() - it has no way to call
 # invalidate_memory_cache() in this process directly. Without this check,
 # the site would keep serving the snapshot from the moment _cache was last
 # warmed (e.g. 50 stocks from early in a 3-hour run) until the whole run
@@ -86,13 +86,13 @@ def nightly_refresh():
     generate.py as a subprocess so the Flask process is never blocked.
     generate.py writes directly to the SQLite DB; once it exits we
     invalidate the in-memory cache so the next request picks up fresh data.
-    All output — including errors — is written to server/generate.log.
+    All output - including errors - is written to server/generate.log.
 
     generate.py checkpoints its progress to the DB after every ticker, so:
       - On timeout, we send SIGTERM (not SIGKILL) and give it a grace
         period to checkpoint and exit cleanly.
       - If a run doesn't finish (timeout, non-zero exit), we immediately
-        relaunch — resume makes the next pass fast since only the
+        relaunch - resume makes the next pass fast since only the
         remaining tickers are fetched. Capped at a few attempts per night
         so a persistent failure doesn't loop forever.
     """
@@ -138,19 +138,19 @@ def nightly_refresh():
                         try:
                             returncode = proc.wait(timeout=RUN_TIMEOUT)
                         except subprocess.TimeoutExpired:
-                            log(f"generate.py exceeded {RUN_TIMEOUT/3600:.1f}h — "
+                            log(f"generate.py exceeded {RUN_TIMEOUT/3600:.1f}h - "
                                 f"sending SIGTERM to checkpoint and exit.")
                             proc.terminate()
                             try:
                                 returncode = proc.wait(timeout=GRACE_PERIOD)
                             except subprocess.TimeoutExpired:
-                                log("generate.py did not exit after SIGTERM — sending SIGKILL.")
+                                log("generate.py did not exit after SIGTERM - sending SIGKILL.")
                                 proc.kill()
                                 returncode = proc.wait()
 
                     if returncode == 0:
                         invalidate_memory_cache()
-                        log("Nightly refresh complete — cache invalidated (exit 0).")
+                        log("Nightly refresh complete - cache invalidated (exit 0).")
                         log("Running alert checker...")
                         try:
                             check_and_fire_alerts()
@@ -159,15 +159,15 @@ def nightly_refresh():
                         break
                     else:
                         log(f"generate.py exited with code {returncode} "
-                            f"— check {LOG_PATH}. Will retry (resume) if attempts remain.")
+                            f"- check {LOG_PATH}. Will retry (resume) if attempts remain.")
                         invalidate_memory_cache()  # checkpoint merges may have updated cache
                 except FileNotFoundError:
-                    log(f"generate.py not found at {generate_script} — check path.")
+                    log(f"generate.py not found at {generate_script} - check path.")
                     break
                 except Exception as e:
                     log(f"Nightly refresh attempt failed with unexpected error: {e}")
             else:
-                log(f"Gave up after {MAX_ATTEMPTS} attempts tonight — "
+                log(f"Gave up after {MAX_ATTEMPTS} attempts tonight - "
                     f"cache holds whatever was checkpointed. Will try again tomorrow.")
         finally:
             set_generating(False)
@@ -190,7 +190,7 @@ def send_digest_job():
     """
     stocks = get_stocks_cached()
     if not stocks:
-        print("  ⚠  Weekly digest skipped — no stock data available yet")
+        print("  ⚠  Weekly digest skipped - no stock data available yet")
         return
 
     con  = get_db()
@@ -240,9 +240,9 @@ def _alert_condition_met(alert: dict, stock: dict) -> bool:
 
 def _alert_email_html(triggered: list) -> tuple:
     count   = len(triggered)
-    subject = (f"▲ StockUpside alert — {triggered[0]['ticker']} triggered"
+    subject = (f"▲ StockUpside alert - {triggered[0]['ticker']} triggered"
                if count == 1
-               else f"▲ StockUpside — {count} alerts triggered")
+               else f"▲ StockUpside - {count} alerts triggered")
     rows_html = ""
     rows_text = ""
     for t in triggered:
@@ -290,7 +290,7 @@ def _alert_email_html(triggered: list) -> tuple:
             <div style="font-size:11px;color:#666;margin-top:2px">rank</div>
           </td>
         </tr>"""
-        rows_text += (f"\n{ticker} — {trigger_desc}\n"
+        rows_text += (f"\n{ticker} - {trigger_desc}\n"
                       f"  Upside: {upside_sign}{s['upside_pct']}%  "
                       f"Price: ${s['current_price']}  Rank: #{s['rank']}\n"
                       f"  https://stockupside.io/stocks/{ticker}\n")
@@ -329,7 +329,7 @@ def _alert_email_html(triggered: list) -> tuple:
     </td></tr>
   </table>
 </body></html>"""
-    text  = f"StockUpside.io Pro Alerts — {datetime.date.today()}\n"
+    text  = f"StockUpside.io Pro Alerts - {datetime.date.today()}\n"
     text += f"{count} alert{'s' if count != 1 else ''} triggered:\n"
     text += rows_text
     text += f"\nManage alerts: https://stockupside.io/alerts\n"
@@ -339,7 +339,7 @@ def _alert_email_html(triggered: list) -> tuple:
 def check_and_fire_alerts():
     stocks = get_stocks_cached()
     if not stocks:
-        print("  ⚠  Alert check skipped — no stock data")
+        print("  ⚠  Alert check skipped - no stock data")
         return
     stock_map  = {s["ticker"]: s for s in stocks}
     con        = get_db()
@@ -366,7 +366,7 @@ def check_and_fire_alerts():
             alert["stock"] = stock
             fired_by_email.setdefault(email_addr, []).append(alert)
     if not fired_by_email:
-        print("  ✓  Alert check complete — no alerts triggered")
+        print("  ✓  Alert check complete - no alerts triggered")
         return
     total_sent = 0
     con = get_db()
@@ -384,7 +384,7 @@ def check_and_fire_alerts():
     con.commit()
     con.close()
     total_fired = sum(len(v) for v in fired_by_email.values())
-    print(f"  ✓  Alert check complete — {total_fired} rules fired, "
+    print(f"  ✓  Alert check complete - {total_fired} rules fired, "
           f"emails sent to {total_sent}/{len(fired_by_email)} subscribers")
 
 
@@ -630,7 +630,7 @@ def get_momentum(ticker: str, current_consensus: str, current_count: int) -> dic
             trend = "down"
             trend_detail = f"{past_consensus} → {current_consensus}"
         else:
-            # Same consensus — check if analyst count is growing
+            # Same consensus - check if analyst count is growing
             count_delta = current_count - history[30]["analyst_count"]
             if count_delta >= 2:
                 trend = "up"
@@ -690,15 +690,7 @@ def set_generating(val: bool):
     with _generating_lock:
         _generating = val
 
-# Checkpoints the nightly job actively resolves from live snapshots.
 CHECKPOINTS = [30, 60, 90]
-
-# All checkpoints that may exist in the `performance` table and that the
-# accuracy tab should be able to report on. This includes the long-horizon
-# checkpoints (180/365/730) that backfill_accuracy.py populates directly
-# from historical price data — those never go through check_performance(),
-# so they must stay listed here even though they're not in CHECKPOINTS.
-REPORTABLE_CHECKPOINTS = [30, 60, 90, 180, 365, 730]
 
 def check_performance():
     """
@@ -738,7 +730,7 @@ def check_performance():
 
                 actual_return = round((price_now / price_then - 1) * 100, 2)
                 # "Hit target" = price came within 5% of the analyst target at any point
-                # We use current price as a proxy — for exact tracking you'd need
+                # We use current price as a proxy - for exact tracking you'd need
                 # intraday history, but this is a good approximation
                 hit_target = 1 if price_now >= target_price * 0.95 else 0
 
@@ -837,11 +829,11 @@ def init_db():
     # ── Per-firm analyst track record ────────────────────────────────────
     # Originally designed to store per-firm price targets, but Yahoo's
     # free upgrade/downgrade feed (yfinance's upgrades_downgrades) only
-    # provides rating changes — firm, from-grade, to-grade, action, date —
+    # provides rating changes - firm, from-grade, to-grade, action, date -
     # not a per-firm price target. Price-target accuracy can only be
     # measured at the consensus level (see `performance` table above).
     # What IS measurable per-firm: whether an upgrade/downgrade call was
-    # directionally right — did the stock move the predicted way in the
+    # directionally right - did the stock move the predicted way in the
     # following weeks. That's what this table is actually for now.
     con.execute("""CREATE TABLE IF NOT EXISTS analyst_calls (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -858,7 +850,7 @@ def init_db():
     con.execute("CREATE INDEX IF NOT EXISTS idx_calls_firm ON analyst_calls(firm)")
     con.execute("CREATE INDEX IF NOT EXISTS idx_calls_ticker ON analyst_calls(ticker)")
 
-    # Outcome of each call, checked 30/60/90 days out — same pattern as
+    # Outcome of each call, checked 30/60/90 days out - same pattern as
     # the existing `performance` table, but scoped to the individual call
     # rather than the aggregate consensus.
     con.execute("""CREATE TABLE IF NOT EXISTS analyst_call_outcomes (
@@ -937,7 +929,7 @@ def save_cache(data):
     con.commit(); con.close()
 
 def get_stocks():
-    # Deprecated — use get_stocks_cached(). Data is now written only by
+    # Deprecated - use get_stocks_cached(). Data is now written only by
     # the offline generate.py job, never triggered from a request handler.
     return get_stocks_cached()
 
@@ -947,7 +939,7 @@ def get_db() -> sqlite3.Connection:
     con.execute("PRAGMA busy_timeout=5000")
     return con
 
-# get_stocks_cached — NEVER blocks. Returns [] if no data is available yet.
+# get_stocks_cached - NEVER blocks. Returns [] if no data is available yet.
 # Data is only written by the offline generate.py job or nightly_refresh thread.
 def get_stocks_cached() -> list:
     today = datetime.date.today().isoformat()
@@ -981,7 +973,7 @@ def get_stocks_cached() -> list:
     if not data:
         data, data_date, data_ts = get_any_cached_with_date()
 
-    # 5. Still nothing — DB is empty (generate.py has never run)
+    # 5. Still nothing - DB is empty (generate.py has never run)
     if not data:
         return []
 
@@ -1069,7 +1061,7 @@ def get_latest_cache_ts(date_str: str) -> int | None:
 def get_any_cached_with_date():
     """Like get_any_cached() but also returns the row's date and ts so the
     in-memory cache can be keyed to the data's actual date/timestamp rather
-    than today — preventing stale data from being served indefinitely."""
+    than today - preventing stale data from being served indefinitely."""
     con = get_db()
     row = con.execute(
         "SELECT data, date, ts FROM cache ORDER BY ts DESC LIMIT 1"
@@ -1187,7 +1179,7 @@ def render_analyst_track_record() -> str:
   <p class="atr-sub">
     How often do Wall Street price targets actually get hit?
     We track every analyst consensus prediction in our database and measure
-    real outcomes at 30, 60, and 90 days. Data builds automatically —
+    real outcomes at 30, 60, and 90 days. Data builds automatically -
     check back as snapshots accumulate.
   </p>
 
@@ -1585,7 +1577,7 @@ function renderTable(items, type) {{
       <span class="ch-rank">${{i+1}}</span>
       <span class="ch-ticker">${{s.ticker}}</span>
       <span class="ch-change">
-        <span class="ch-from" style="color:${{fromCol}}">${{s.past_consensus || "—"}}</span>
+        <span class="ch-from" style="color:${{fromCol}}">${{s.past_consensus || "-"}}</span>
         <span class="ch-arrow" style="color:${{deltaCol}}">→</span>
         <span class="ch-to"   style="color:${{toColor}}">${{s.curr_consensus}}</span>
       </span>
@@ -1727,7 +1719,7 @@ _SMTP_PASS  = os.environ.get("SMTP_PASS",  "")
 _EMAIL_FROM = os.environ.get("EMAIL_FROM", "hello@stockupside.io")
 _SITE_URL   = os.environ.get("ALLOWED_ORIGIN", "https://stockupside.io")
 
-# Resend (https://resend.com) — preferred email provider. Uses their HTTP
+# Resend (https://resend.com) - preferred email provider. Uses their HTTP
 # API (no SMTP connection overhead, better deliverability diagnostics).
 # Get an API key from https://resend.com/api-keys and verify your sending
 # domain at https://resend.com/domains before setting this.
@@ -1739,11 +1731,11 @@ def send_email(to: str, subject: str, html: str, text: str = "") -> bool:
     """Send a single email. Returns True on success, False on failure.
 
     Provider priority:
-      1. Resend HTTP API (if RESEND_API_KEY is set) — recommended.
-      2. Generic SMTP (if SMTP_HOST is set) — works with Resend's SMTP
+      1. Resend HTTP API (if RESEND_API_KEY is set) - recommended.
+      2. Generic SMTP (if SMTP_HOST is set) - works with Resend's SMTP
          relay too (smtp.resend.com, port 587, user "resend",
          password = your API key) if you'd rather not use the HTTP API.
-      3. Dev mode (neither configured) — logs to stdout, returns True so
+      3. Dev mode (neither configured) - logs to stdout, returns True so
          the calling code's flow (digest counts, etc.) isn't affected.
     """
     if _RESEND_API_KEY:
@@ -1784,7 +1776,7 @@ def _send_via_resend(to: str, subject: str, html: str, text: str = "") -> bool:
             return False
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace")
-        print(f"  ⚠  Resend error sending to {to}: HTTP {e.code} — {body}")
+        print(f"  ⚠  Resend error sending to {to}: HTTP {e.code} - {body}")
         return False
     except Exception as e:
         print(f"  ⚠  Resend request failed for {to}: {e}")
@@ -1866,7 +1858,7 @@ def apply_email_filters(stocks: list, prefs: dict, limit: int = 10) -> list:
     return up to `limit` results, preserving the existing upside-based
     ranking order. Mirrors the frontend's applyFilters() logic in main.ts.
 
-    If the filtered set has fewer than `limit` results, it is NOT padded —
+    If the filtered set has fewer than `limit` results, it is NOT padded -
     the caller decides whether to send a shorter list or fall back to
     the unfiltered top-10. See digest_email_html() for the fallback note.
     """
@@ -1916,7 +1908,7 @@ def _resolve_token_email(token: str) -> str | None:
         return None
     email_addr, expires_at, plan = row
     if expires_at < now or plan != "pro":
-        # Expired or no longer Pro — clean up the dangling session.
+        # Expired or no longer Pro - clean up the dangling session.
         con.execute("DELETE FROM sessions WHERE token=?", (token,))
         con.commit()
         con.close()
@@ -1933,7 +1925,7 @@ def _resolve_token_email(token: str) -> str | None:
 #   - A leaked token has no PII and stops working after SESSION_TTL_DAYS.
 #   - Tokens can be revoked individually (e.g. "log out everywhere").
 #   - Possessing a token proves nothing about WHO you are beyond "had a
-#     valid session at some point" — same as any other session cookie scheme.
+#     valid session at some point" - same as any other session cookie scheme.
 SESSION_TTL_DAYS = 30
 
 def create_session(email_addr: str) -> str:
@@ -1986,7 +1978,7 @@ def downgrade_subscriber(email_addr: str) -> bool:
 
 # ── API tier: key management ───────────────────────────────────────────────
 # Keys are prefixed (su_live_...) so they're recognizable in logs, support
-# tickets, and accidental commits — a bare random token gives no hint about
+# tickets, and accidental commits - a bare random token gives no hint about
 # what it is or where it leaked from. No expiry by default (unlike web
 # sessions): API integrations break silently if a key rotates out from
 # under them, so revocation is explicit (cancel subscription, or a future
@@ -1994,7 +1986,7 @@ def downgrade_subscriber(email_addr: str) -> bool:
 API_KEY_PREFIX = "su_live_"
 
 def create_api_key(email_addr: str, stripe_id: str | None = None, label: str | None = None) -> str:
-    """Issue a new API key for an email. Does not check for existing keys —
+    """Issue a new API key for an email. Does not check for existing keys -
     callers should decide whether to allow multiple keys per email."""
     api_key = API_KEY_PREFIX + secrets.token_urlsafe(32)
     now = int(time.time())
@@ -2041,7 +2033,7 @@ def revoke_api_key(api_key: str) -> bool:
     return cur.rowcount > 0
 
 def revoke_all_api_keys(email_addr: str) -> int:
-    """Revoke every API key for an email — called when the underlying
+    """Revoke every API key for an email - called when the underlying
     Stripe subscription is cancelled, mirroring revoke_all_sessions."""
     con = get_db()
     cur = con.execute(
@@ -2061,7 +2053,7 @@ API_DAILY_REQUEST_LIMIT = 10_000
 def check_and_record_api_usage(api_key: str) -> tuple[bool, int]:
     """Increment today's request count for this key and return
     (allowed, count_after_increment). Allowed is False once the key has
-    hit API_DAILY_REQUEST_LIMIT for the day — callers should return 429."""
+    hit API_DAILY_REQUEST_LIMIT for the day - callers should return 429."""
     today = datetime.date.today().isoformat()
     con = get_db()
     con.execute(
@@ -2082,7 +2074,7 @@ def check_and_record_api_usage(api_key: str) -> tuple[bool, int]:
 def _admin_authorized() -> bool:
     """Constant-time admin secret check. Plain `!=` on strings of
     different lengths returns immediately, leaking how many leading
-    characters matched via response timing — `hmac.compare_digest`
+    characters matched via response timing - `hmac.compare_digest`
     avoids this."""
     secret = os.environ.get("ADMIN_SECRET", "")
     provided = request.headers.get("X-Admin-Key", "")
@@ -2093,7 +2085,7 @@ def _admin_authorized() -> bool:
 
 def _unsubscribe_token_valid(email_addr: str, token: str) -> bool:
     expected = hashlib.sha256(f"unsub:{email_addr}:{_APP_SECRET}".encode()).hexdigest()[:24]
-    # Constant-time comparison — plain `==` leaks timing information that
+    # Constant-time comparison - plain `==` leaks timing information that
     # can be used to brute-force the token byte-by-byte.
     return hmac.compare_digest(token, expected)
 
@@ -2105,7 +2097,7 @@ def welcome_email_html(email_addr: str) -> str:
   <div style="font-size:28px;font-weight:700;margin-bottom:4px">▲ StockUpside.io</div>
   <div style="color:#00e676;font-size:12px;letter-spacing:.1em;margin-bottom:32px">ANALYST PRICE TARGET INTELLIGENCE</div>
   <p style="font-size:15px;line-height:1.7">You're on the list! Every week we'll send you the
-  <strong>top 10 stocks by analyst upside</strong> — completely free.</p>
+  <strong>top 10 stocks by analyst upside</strong> - completely free.</p>
   <p style="font-size:13px;color:#8b949e;line-height:1.7">
     Data is sourced from analyst consensus price targets and updated daily.
     This is not financial advice.
@@ -2160,10 +2152,10 @@ def digest_email_html(stocks: list, email_addr: str, prefs: dict | None = None) 
 
     if is_custom and not fell_back:
         eyebrow   = "YOUR TOP 10"
-        subject   = f"▲ Your Top 10 Stock Picks — {today}"
+        subject   = f"▲ Your Top 10 Stock Picks - {today}"
     else:
         eyebrow   = "WEEKLY TOP 10"
-        subject   = f"▲ Top 10 Stock Picks — {today}"
+        subject   = f"▲ Top 10 Stock Picks - {today}"
 
     fallback_notice_html = ""
     fallback_notice_txt  = ""
@@ -2171,11 +2163,11 @@ def digest_email_html(stocks: list, email_addr: str, prefs: dict | None = None) 
         fallback_notice_html = """
   <div style="background:#1f1500;border:1px solid #f0b429;border-radius:4px;
               padding:10px 14px;font-size:12px;color:#ffd740;margin-bottom:20px">
-    ⚠ No stocks matched your saved filters this week — showing the overall
+    ⚠ No stocks matched your saved filters this week - showing the overall
     Top 10 instead. Adjust your filters anytime from your account settings.
   </div>"""
         fallback_notice_txt = (
-            "Note: No stocks matched your saved filters this week — "
+            "Note: No stocks matched your saved filters this week - "
             "showing the overall Top 10 instead.\n\n"
         )
 
@@ -2222,7 +2214,7 @@ def digest_email_html(stocks: list, email_addr: str, prefs: dict | None = None) 
 </body></html>"""
 
     text_title = "Your Top 10 Stock Picks" if (is_custom and not fell_back) else "Top 10 Stock Picks"
-    text = f"▲ StockUpside.io — {text_title} — {today}\n\n{fallback_notice_txt}{rows_txt}\nView full list: {_SITE_URL}\nUnsubscribe: {unsub}\n"
+    text = f"▲ StockUpside.io - {text_title} - {today}\n\n{fallback_notice_txt}{rows_txt}\nView full list: {_SITE_URL}\nUnsubscribe: {unsub}\n"
     return subject, html, text
 
 
@@ -2296,11 +2288,11 @@ def api_export_csv():
         accepts_html = "text/html" in request.headers.get("Accept", "")
         if accepts_html:
             return redirect("/?export=login", code=302)
-        return jsonify({"error": "Pro subscription required — pass ?token=YOUR_TOKEN"}), 403
+        return jsonify({"error": "Pro subscription required - pass ?token=YOUR_TOKEN"}), 403
 
     stocks = get_stocks_cached()
     if not stocks:
-        return jsonify({"error": "Stock data not yet available — try again shortly"}), 503
+        return jsonify({"error": "Stock data not yet available - try again shortly"}), 503
 
     scope = request.args.get("scope", "all").strip().lower()
     if scope == "watchlist":
@@ -2348,7 +2340,7 @@ def api_export_csv():
 @limiter.limit("600 per hour")
 def api_stocks():
     # SECURITY: tier is determined server-side from a verified session
-    # token — never trust a client-supplied `?tier=pro` query param.
+    # token - never trust a client-supplied `?tier=pro` query param.
     # Previously this endpoint returned the full Pro dataset to anyone
     # who requested `?tier=pro` directly, with zero authentication.
     token = (
@@ -2361,7 +2353,7 @@ def api_stocks():
     today  = datetime.date.today()
     nxt    = (today + datetime.timedelta(days=1)).isoformat()
 
-    # No data yet — generate.py hasn't run. Return a clear pending state.
+    # No data yet - generate.py hasn't run. Return a clear pending state.
     if not stocks:
         return jsonify({"stocks": [], "total": 0, "tier": tier,
                         "last_updated": None, "next_update": nxt,
@@ -2404,7 +2396,7 @@ def api_stocks():
 def api_stats():
     stocks = get_stocks_cached()
 
-    # No data yet — generate.py hasn't run
+    # No data yet - generate.py hasn't run
     if not stocks:
         return jsonify({
             "total_stocks": 0, "avg_upside": 0, "top_upside": 0,
@@ -2424,7 +2416,7 @@ def api_stats():
             sectors[sec]["avg_upside"] / sectors[sec]["count"], 1)
 
     # Use the DB cache row's actual write timestamp (ts column) as the
-    # authoritative "when was this data last published" date — not
+    # authoritative "when was this data last published" date - not
     # stocks[0]["last_updated"], which reflects when that individual ticker
     # was originally fetched by generate.py. When the merge-protection path
     # in save_final_cache() fires (partial run < 50% of universe), carried-
@@ -2440,7 +2432,7 @@ def api_stats():
         # Use UTC date to match datetime.date.today() which is also UTC-agnostic.
         # fromtimestamp() uses local server timezone which can cause off-by-one
         # errors if the server is UTC and the cache was written just before/after
-        # midnight — utcfromtimestamp().date() is consistent regardless of the
+        # midnight - utcfromtimestamp().date() is consistent regardless of the
         # server's local timezone setting.
         last_updated = datetime.datetime.fromtimestamp(
             cache_ts_row[0], tz=datetime.timezone.utc
@@ -2470,7 +2462,7 @@ def api_stats():
     })
 
 
-# ── API v1 — programmatic access tier ($99/mo) ────────────────────────────
+# ── API v1 - programmatic access tier ($99/mo) ────────────────────────────
 # Separate namespace (/api/v1/...) from the existing /api/* routes, which
 # are the SPA's own internal endpoints (session-token auth, free/pro
 # tiering baked in, shapes tuned for the frontend). v1 is a distinct
@@ -2482,13 +2474,13 @@ def _extract_api_key() -> str:
     if auth.startswith("Bearer "):
         return auth.removeprefix("Bearer ").strip()
     # Also accept ?api_key=... for convenience (e.g. quick browser testing),
-    # though the header form is what we document and recommend — query
+    # though the header form is what we document and recommend - query
     # params end up in server logs and browser history.
     return request.args.get("api_key", "").strip()
 
 def require_api_key(view_func):
     """Decorator: resolves the API key, enforces the daily usage cap, and
-    records the request — or returns the appropriate 401/429 JSON error.
+    records the request - or returns the appropriate 401/429 JSON error.
     Wraps the view rather than duplicating this in every v1 route."""
     @wraps(view_func)
     def wrapped(*args, **kwargs):
@@ -2530,14 +2522,14 @@ def _api_key_for_limiter() -> str:
 @require_api_key
 def api_v1_stocks():
     """List stocks ranked by analyst consensus upside. No free/pro tiering
-    here — the API tier itself is the paywall, so an authenticated request
+    here - the API tier itself is the paywall, so an authenticated request
     always gets the full dataset, just paginated.
 
     Query params:
-      limit   — max rows to return (default 100, max 500)
-      offset  — pagination offset (default 0)
-      sector  — exact sector match, e.g. "Technology"
-      min_analysts — minimum analyst_count
+      limit   - max rows to return (default 100, max 500)
+      offset  - pagination offset (default 0)
+      sector  - exact sector match, e.g. "Technology"
+      min_analysts - minimum analyst_count
     """
     stocks = get_stocks_cached()
     if not stocks:
@@ -2652,7 +2644,7 @@ def _track_server_event(event_name: str, props: dict | None = None):
     """Fire a custom event to Plausible's events API from the server.
     Used for events that happen across a redirect (Stripe checkout
     completion), where client-side JS can't confirm the outcome. Best
-    effort — failures here never block the actual request."""
+    effort - failures here never block the actual request."""
     domain = os.environ.get("PLAUSIBLE_DOMAIN", "stockupside.io")
     payload = json.dumps({
         "domain": domain, "name": event_name,
@@ -2669,7 +2661,7 @@ def _track_server_event(event_name: str, props: dict | None = None):
 
 @app.route("/api/docs")
 def api_docs_page():
-    """Public, indexable API documentation. No auth required to view —
+    """Public, indexable API documentation. No auth required to view -
     the docs page itself is a top-of-funnel SEO asset (per the marketing
     plan), separate from the actual v1 endpoints which do require a key."""
     return Response(_render_api_docs_page(), mimetype="text/html")
@@ -2681,7 +2673,7 @@ def _render_api_docs_page() -> str:
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>API Documentation | StockUpside.io</title>
-  <meta name="description" content="Programmatic access to analyst consensus upside data — ranked stocks, price targets, and analyst counts via a simple REST API. $99/mo."/>
+  <meta name="description" content="Programmatic access to analyst consensus upside data - ranked stocks, price targets, and analyst counts via a simple REST API. $99/mo."/>
   <meta property="og:title"       content="API Documentation | StockUpside.io"/>
   <meta property="og:description" content="Pull analyst consensus upside data programmatically. REST API, JSON responses, $99/mo flat."/>
   <meta property="og:url"         content="https://stockupside.io/api/docs"/>
@@ -2729,7 +2721,7 @@ def _render_api_docs_page() -> str:
   <div class="docs-wrap">
     <h1>▲ StockUpside API</h1>
     <div class="docs-sub">
-      Programmatic access to the same analyst consensus upside data that powers the site —
+      Programmatic access to the same analyst consensus upside data that powers the site -
       ranked stocks, price targets, analyst counts, and sector breakdowns. JSON over REST,
       no SDK required.
     </div>
@@ -2747,7 +2739,7 @@ def _render_api_docs_page() -> str:
     <p>
       Every request needs your API key in the <code>Authorization</code> header as a Bearer
       token. Keys look like <code>su_live_...</code> and are issued once, immediately after
-      checkout — there's no separate "generate key" step.
+      checkout - there's no separate "generate key" step.
     </p>
     <pre><code>curl -H "Authorization: Bearer su_live_YOUR_KEY" \\
   https://stockupside.io/api/v1/stocks</code></pre>
@@ -2759,7 +2751,7 @@ def _render_api_docs_page() -> str:
     <h2 id="stocks">GET /api/v1/stocks</h2>
     <p>
       Returns stocks ranked by analyst consensus upside. Unlike the free/Pro web tiers, an
-      authenticated API request always gets the full dataset — the API subscription itself is
+      authenticated API request always gets the full dataset - the API subscription itself is
       the gate, so there's no separate top-10 limit to work around.
     </p>
     <table>
@@ -2767,7 +2759,7 @@ def _render_api_docs_page() -> str:
       <tbody>
         <tr><td><code>limit</code></td><td>int</td><td>100</td><td>Max rows to return (max 500)</td></tr>
         <tr><td><code>offset</code></td><td>int</td><td>0</td><td>Pagination offset</td></tr>
-        <tr><td><code>sector</code></td><td>string</td><td>—</td><td>Exact sector match, e.g. <code>Technology</code></td></tr>
+        <tr><td><code>sector</code></td><td>string</td><td>-</td><td>Exact sector match, e.g. <code>Technology</code></td></tr>
         <tr><td><code>min_analysts</code></td><td>int</td><td>0</td><td>Minimum analyst coverage count</td></tr>
       </tbody>
     </table>
@@ -2829,7 +2821,7 @@ def _render_api_docs_page() -> str:
     </div>
     <p>
       Built for quant hobbyists, small funds, and anyone building a tool on top of analyst
-      consensus data who'd rather not scrape it by hand. Cancel anytime — your key stops working
+      consensus data who'd rather not scrape it by hand. Cancel anytime - your key stops working
       immediately on cancellation, no partial-month proration headaches on our end to worry about.
     </p>
   </div>
@@ -2933,7 +2925,7 @@ def api_tier_subscribe():
 def api_tier_success_page():
     """Post-checkout landing for the API tier. Unlike /success (which
     issues a short-lived web session token), this issues a long-lived
-    API key and shows it exactly once — Stripe/our DB never displays the
+    API key and shows it exactly once - Stripe/our DB never displays the
     full key again after this page, matching how most API products
     (Stripe itself included) handle key reveal."""
     session_id = request.args.get("session_id", "")
@@ -2957,7 +2949,7 @@ def api_tier_success_page():
 def _render_api_key_reveal_page(api_key: str, email: str) -> str:
     """One-time key reveal page. Plain server-rendered HTML (no main.js
     dependency) so it works even if something's wrong with the SPA bundle
-    — this page only needs to ever do one thing correctly."""
+    - this page only needs to ever do one thing correctly."""
     safe_email = escape(email)
     safe_key   = escape(api_key)
     return f"""<!DOCTYPE html>
@@ -2976,7 +2968,7 @@ def _render_api_key_reveal_page(api_key: str, email: str) -> str:
 </style></head>
 <body>
   <h1>▲ Your API Key</h1>
-  <p>Subscribed as <strong>{safe_email}</strong>. Save this key now — for security, we only
+  <p>Subscribed as <strong>{safe_email}</strong>. Save this key now - for security, we only
   show it once and can't display it again later.</p>
   <div class="key-box">{safe_key}</div>
   <p class="warn">⚠ Copy this somewhere safe before leaving this page.</p>
@@ -2991,13 +2983,13 @@ def _render_api_key_reveal_page(api_key: str, email: str) -> str:
 @app.route("/api/stripe-webhook", methods=["POST"])
 @limiter.exempt
 def stripe_webhook():
-    """Handle Stripe webhook events — specifically subscription cancellations.
+    """Handle Stripe webhook events - specifically subscription cancellations.
 
     When a subscriber cancels (or their subscription lapses due to failed
     payment, etc.), Stripe sends `customer.subscription.deleted`. Without
     this handler, a cancelled subscriber would stay `plan='pro'` in our DB
     indefinitely, and their session tokens would keep working for the full
-    SESSION_TTL_DAYS — i.e. they'd retain Pro access after cancelling.
+    SESSION_TTL_DAYS - i.e. they'd retain Pro access after cancelling.
 
     On `customer.subscription.deleted`:
       - Downgrade the matching subscriber (by stripe_id / customer id) to 'free'.
@@ -3013,7 +3005,7 @@ def stripe_webhook():
     webhook_secret = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
 
     if not webhook_secret:
-        print("  ⚠  STRIPE_WEBHOOK_SECRET not set — rejecting webhook (cannot verify signature).")
+        print("  ⚠  STRIPE_WEBHOOK_SECRET not set - rejecting webhook (cannot verify signature).")
         return jsonify({"error": "Webhook not configured"}), 503
 
     try:
@@ -3040,10 +3032,10 @@ def stripe_webhook():
         if row:
             email_addr = row[0]
             downgrade_subscriber(email_addr)
-            print(f"  ✓  Subscription cancelled for {email_addr} — "
+            print(f"  ✓  Subscription cancelled for {email_addr} - "
                   f"downgraded to free, sessions and API keys revoked.")
         else:
-            # Not a Pro web subscriber — check whether this customer_id
+            # Not a Pro web subscriber - check whether this customer_id
             # belongs to an API tier subscription instead. These are
             # billed as separate Stripe subscriptions/customers from the
             # Pro web tier, so they won't show up in `subscribers` at all.
@@ -3056,7 +3048,7 @@ def stripe_webhook():
             if api_row:
                 api_email = api_row[0]
                 revoke_all_api_keys(api_email)
-                print(f"  ✓  API tier subscription cancelled for {api_email} — "
+                print(f"  ✓  API tier subscription cancelled for {api_email} - "
                       f"API key(s) revoked.")
             else:
                 print(f"  ⚠  Webhook: customer.subscription.deleted for unknown "
@@ -3080,7 +3072,7 @@ def api_subscribe_free():
     is_new = False
     try:
         con = get_db()
-        # INSERT OR IGNORE — don't downgrade an existing pro subscriber
+        # INSERT OR IGNORE - don't downgrade an existing pro subscriber
         cur = con.execute("""
             INSERT OR IGNORE INTO subscribers (email, plan, created_at)
             VALUES (?, 'free', ?)
@@ -3108,7 +3100,7 @@ def api_subscribe_free():
 def api_send_digest():
     """Admin-only: manually trigger the weekly digest to all subscribers
     (free + pro, with pro subscribers getting their personalized picks).
-    Primarily for testing — the normal cadence runs via weekly_digest()."""
+    Primarily for testing - the normal cadence runs via weekly_digest()."""
     if not _admin_authorized():
         return jsonify({"error": "Unauthorized"}), 401
 
@@ -3216,7 +3208,7 @@ def api_get_token():
     """Request a Pro login link by email ('forgot access' / cross-device login).
 
     SECURITY: This endpoint deliberately does NOT return a token directly.
-    Email addresses are not secret — if we returned a fresh session token
+    Email addresses are not secret - if we returned a fresh session token
     to anyone who typed in a known subscriber's email, that would be an
     account-takeover vector. Instead we email a one-time login link to the
     address on file. The response is identical whether or not the email
@@ -3259,7 +3251,7 @@ def api_get_token():
         text = f"Log in to StockUpside.io Pro: {link}\n\nIf you didn't request this, ignore this email."
         send_email(sub_email, subject, html, text)
 
-    # Same response regardless of whether the email matched — prevents
+    # Same response regardless of whether the email matched - prevents
     # using this endpoint to check which emails are Pro subscribers.
     return jsonify({"success": True,
                     "message": "If that email has a Pro subscription, "
@@ -3295,7 +3287,7 @@ def api_logout():
 @app.route("/api/logout-everywhere", methods=["POST", "OPTIONS"])
 @limiter.limit("10 per hour")
 def api_logout_everywhere():
-    """Revoke ALL sessions for the subscriber tied to the given token —
+    """Revoke ALL sessions for the subscriber tied to the given token -
     use if a token may have been shared/leaked."""
     if request.method == "OPTIONS":
         return Response(status=200)
@@ -3315,7 +3307,7 @@ def api_email_prefs():
 
     Auth: pass the Pro access token as either the 'token' query/body param
     or an 'Authorization: Bearer <token>' header. Resolves to the
-    subscriber's email server-side — the email itself is never trusted
+    subscriber's email server-side - the email itself is never trusted
     from the client for write operations.
     """
     if request.method == "OPTIONS":
@@ -3333,7 +3325,7 @@ def api_email_prefs():
     if request.method == "GET":
         return jsonify({"prefs": get_email_prefs(email_addr)})
 
-    # POST — save new preferences
+    # POST - save new preferences
     body  = request.get_json(force=True) or {}
     prefs = body.get("prefs", {})
 
@@ -3362,7 +3354,7 @@ def api_email_prefs():
 @app.route("/api/watchlist", methods=["GET", "POST", "DELETE", "OPTIONS"])
 @limiter.limit("120 per hour")
 def api_watchlist():
-    """Watchlist endpoint — open to both free and Pro users.
+    """Watchlist endpoint - open to both free and Pro users.
 
     Free users: pass `free_email` (their subscribed email from localStorage).
       - Can watchlist any ticker in the free tier (top 20 unlocked stocks).
@@ -3372,7 +3364,7 @@ def api_watchlist():
 
     Auth resolution order:
       1. Pro token (query param / body / Authorization header)
-      2. free_email param — validated as a known subscriber address
+      2. free_email param - validated as a known subscriber address
     """
     if request.method == "OPTIONS":
         return Response(status=200)
@@ -3423,7 +3415,7 @@ def api_watchlist():
 
         if not is_pro:
             # Free users only see their watchlisted stocks that are still
-            # in the unlocked set — if a stock drops out of the free top 20
+            # in the unlocked set - if a stock drops out of the free top 20
             # it becomes invisible on the watchlist page until they upgrade.
             unlocked = {s["ticker"] for s in stocks if not s.get("locked")}
             tickers  = tickers & unlocked
@@ -3472,7 +3464,7 @@ def api_watchlist():
 
 @app.route("/watchlist")
 def watchlist_page():
-    # Same pattern as /stocks — let the frontend (main.js) detect the path
+    # Same pattern as /stocks - let the frontend (main.js) detect the path
     # and render the watchlist view client-side.
     return send_from_directory(PUBLIC_DIR, "index.html")
 
@@ -3643,7 +3635,7 @@ def api_refresh():
                     returncode = proc.wait(timeout=RUN_TIMEOUT)
                 except subprocess.TimeoutExpired:
                     logfile.write(f"[{ts}] Manual refresh exceeded "
-                                   f"{RUN_TIMEOUT/3600:.1f}h — sending SIGTERM.\n")
+                                   f"{RUN_TIMEOUT/3600:.1f}h - sending SIGTERM.\n")
                     proc.terminate()
                     try:
                         returncode = proc.wait(timeout=GRACE_PERIOD)
@@ -3652,10 +3644,10 @@ def api_refresh():
                         returncode = proc.wait()
             if returncode == 0:
                 invalidate_memory_cache()
-                print("  ✓  Manual refresh complete — cache invalidated.")
+                print("  ✓  Manual refresh complete - cache invalidated.")
             else:
                 invalidate_memory_cache()
-                print(f"  ⚠  generate.py exited with code {returncode} — check {LOG_PATH}.")
+                print(f"  ⚠  generate.py exited with code {returncode} - check {LOG_PATH}.")
         except Exception as e:
             print(f"  ⚠  Manual refresh failed: {e}")
         finally:
@@ -3664,14 +3656,14 @@ def api_refresh():
     threading.Thread(target=_run, daemon=True).start()
 
     # Return the last 20 lines of the log so the caller can see what the
-    # *previous* run did — useful for diagnosing why the last refresh failed
+    # *previous* run did - useful for diagnosing why the last refresh failed
     # without needing SSH access.
     log_tail = []
     try:
         with open(LOG_PATH, "r") as f:
             log_tail = f.readlines()[-20:]
     except FileNotFoundError:
-        log_tail = ["(no log file yet — this is the first refresh)"]
+        log_tail = ["(no log file yet - this is the first refresh)"]
 
     return jsonify({
         "success": True,
@@ -3709,10 +3701,10 @@ def similar_stocks(target: dict, stocks: list, n: int = 5) -> list:
     """Find stocks with similar fundamentals to `target`.
 
     Approach: restrict to the same sector (cross-sector valuation
-    comparisons are rarely meaningful — a PEG of 1.5 means something very
+    comparisons are rarely meaningful - a PEG of 1.5 means something very
     different in Utilities vs. Technology), then rank by a simple weighted
     distance over a few normalized fundamental features. This is a
-    deterministic similarity score, not a trained model — no training data,
+    deterministic similarity score, not a trained model - no training data,
     storage, or pipeline required, and it's explainable to users ("similar
     sector, size, and valuation").
 
@@ -3723,7 +3715,7 @@ def similar_stocks(target: dict, stocks: list, n: int = 5) -> list:
       - upside %
 
     Returns up to `n` stocks, closest first. Returns fewer (or none) if
-    there isn't enough same-sector data with valid fundamentals — this is
+    there isn't enough same-sector data with valid fundamentals - this is
     expected for thinly-covered sectors and is not an error.
     """
     sector = target.get("sector")
@@ -3805,7 +3797,7 @@ SECTOR_SLUG_TO_NAME = {v: k for k, v in SECTOR_SLUGS.items()}
 # frontmatter header (key: value lines between --- markers) followed by the
 # post body as raw HTML. This means writing a new post is just creating a
 # new file and restarting (or, since we reload on every blog request below,
-# not even that) — no code changes, no redeploy of app.py needed.
+# not even that) - no code changes, no redeploy of app.py needed.
 #
 # Example file: server/blog_posts/my-new-post.html
 # ---
@@ -3815,7 +3807,7 @@ SECTOR_SLUG_TO_NAME = {v: k for k, v in SECTOR_SLUGS.items()}
 # excerpt: One or two sentences shown on the blog index and in meta tags.
 # ---
 # <p>Your HTML content here. Use the same tags as other posts (h2, p,
-# strong, a) — they already match the site's styling.</p>
+# strong, a) - they already match the site's styling.</p>
 
 BLOG_POSTS_DIR = os.path.join(BASE_DIR, "server", "blog_posts")
 
@@ -3832,7 +3824,7 @@ def _parse_post_file(path: str) -> dict | None:
 
     parts = raw.split("---", 2)
     if len(parts) < 3:
-        print(f"  ⚠  Blog: {path} is missing '---' frontmatter delimiters — skipped")
+        print(f"  ⚠  Blog: {path} is missing '---' frontmatter delimiters - skipped")
         return None
 
     _, frontmatter, body = parts
@@ -3847,7 +3839,7 @@ def _parse_post_file(path: str) -> dict | None:
     required = ("title", "date", "slug", "excerpt")
     missing  = [k for k in required if not meta.get(k)]
     if missing:
-        print(f"  ⚠  Blog: {path} is missing required field(s) {missing} — skipped")
+        print(f"  ⚠  Blog: {path} is missing required field(s) {missing} - skipped")
         return None
 
     meta["content_html"] = body.strip()
@@ -3856,7 +3848,7 @@ def _parse_post_file(path: str) -> dict | None:
 
 def load_blog_posts() -> list:
     """Load and parse every .html post file in BLOG_POSTS_DIR. Re-reads
-    from disk on every call (cheap — a handful of small files) so new
+    from disk on every call (cheap - a handful of small files) so new
     posts appear immediately without restarting the server."""
     if not os.path.isdir(BLOG_POSTS_DIR):
         return []
@@ -3923,7 +3915,7 @@ def stock_page(ticker):
 
 @app.route("/stocks")
 def stocks_index():
-    # Just return the main index.html — let the frontend handle tier/filtering
+    # Just return the main index.html - let the frontend handle tier/filtering
     return send_from_directory(PUBLIC_DIR, "index.html")
 
 @app.route("/accuracy")
@@ -4009,7 +4001,7 @@ def render_blog_index() -> str:
         </a>"""
 
     if not cards:
-        cards = '<p style="color:var(--text3);font-size:13px">No posts yet — check back soon.</p>'
+        cards = '<p style="color:var(--text3);font-size:13px">No posts yet - check back soon.</p>'
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -4190,10 +4182,10 @@ def render_sectors_index(stocks: list) -> str:
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Stocks by Sector — Analyst Upside Rankings | StockUpside.io</title>
-  <meta name="description" content="Browse the top stocks by analyst price target upside in each sector — Technology, Healthcare, Energy, and more. Updated daily."/>
+  <title>Stocks by Sector - Analyst Upside Rankings | StockUpside.io</title>
+  <meta name="description" content="Browse the top stocks by analyst price target upside in each sector - Technology, Healthcare, Energy, and more. Updated daily."/>
   <meta property="og:type"        content="website"/>
-  <meta property="og:title"       content="Stocks by Sector — Analyst Upside Rankings | StockUpside.io"/>
+  <meta property="og:title"       content="Stocks by Sector - Analyst Upside Rankings | StockUpside.io"/>
   <meta property="og:description" content="See which sectors Wall Street analysts are most bullish on, and the top-ranked stock in each."/>
   <meta property="og:url"         content="https://stockupside.io/sectors"/>
   <meta property="og:image"       content="https://stockupside.io/og-image.png"/>
@@ -4375,7 +4367,7 @@ def render_sector_page(sector_name: str, slug: str, sector_stocks: list) -> str:
       coverage. On average, analysts see <strong>{sign_avg}{avg_upside}% upside</strong> to
       current consensus price targets across the sector, with
       <strong>{strong_buy_pct:.0f}%</strong> of stocks rated Buy or Strong Buy.
-      The table above shows the top {len(top_n)} {sector_name} stocks ranked by upside —
+      The table above shows the top {len(top_n)} {sector_name} stocks ranked by upside -
       click any ticker for full analyst breakdowns, price target ranges, and accuracy history.
     </p>
   </div>
@@ -4495,7 +4487,7 @@ fetch(`/api/accuracy?days=${{currentDays}}`)
 
     if (!hasData) {{
       el.innerHTML = `<div class="no-data">
-        No accuracy data yet. Try a shorter window (1 Month or 3 Months) —
+        No accuracy data yet. Try a shorter window (1 Month or 3 Months) -
         data builds up over time as snapshots accumulate.
       </div>`;
       return;
@@ -4612,7 +4604,7 @@ function ratingColor(c) {{
 def render_404_page(path: str = "") -> str:
     yr = datetime.date.today().year
     # XSS fix: `path` is attacker-controlled (the requested URL). Escape it
-    # before interpolating into HTML — previously this allowed reflected XSS
+    # before interpolating into HTML - previously this allowed reflected XSS
     # via e.g. /stocks/<script>alert(1)</script>.
     safe_path = escape(path)
     return f"""<!DOCTYPE html>
@@ -4620,7 +4612,7 @@ def render_404_page(path: str = "") -> str:
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>404 — Page Not Found | StockUpside.io</title>
+  <title>404 - Page Not Found | StockUpside.io</title>
   <meta name="robots" content="noindex"/>
   <link rel="stylesheet" href="/style.css"/>
   <style>
@@ -4870,7 +4862,7 @@ def render_privacy_page() -> str:
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Privacy Policy | StockUpside.io</title>
-  <meta name="description" content="Privacy policy for StockUpside.io — how we collect, use, and protect your data."/>
+  <meta name="description" content="Privacy policy for StockUpside.io - how we collect, use, and protect your data."/>
   <meta name="robots" content="index, follow"/>
   <link rel="canonical" href="https://stockupside.io/privacy"/>
   <link rel="stylesheet" href="/style.css"/>
@@ -4934,13 +4926,13 @@ def render_privacy_page() -> str:
   <h2>1. Information We Collect</h2>
   <p>We collect only what is necessary to provide the service:</p>
   <ul>
-    <li><strong>Email address</strong> — when you sign up for our free weekly digest or
+    <li><strong>Email address</strong> - when you sign up for our free weekly digest or
     purchase a Pro subscription. We use this to send you the content you requested and,
     for Pro subscribers, to manage your account.</li>
-    <li><strong>Payment information</strong> — Pro subscriptions are processed by Stripe.
+    <li><strong>Payment information</strong> - Pro subscriptions are processed by Stripe.
     We never see or store your full card number. Stripe's privacy policy governs how
     payment data is handled: <a href="https://stripe.com/privacy" target="_blank">stripe.com/privacy</a>.</li>
-    <li><strong>Usage data</strong> — standard server logs (IP address, browser type,
+    <li><strong>Usage data</strong> - standard server logs (IP address, browser type,
     pages visited, time of visit). We use these to diagnose errors and understand
     aggregate traffic patterns. Logs are retained for 30 days.</li>
   </ul>
@@ -4981,10 +4973,10 @@ def render_privacy_page() -> str:
 
   <h2>6. Third-Party Services</h2>
   <ul>
-    <li><strong>Stripe</strong> — payment processing for Pro subscriptions.</li>
-    <li><strong>Yahoo Finance (via yfinance)</strong> — source of analyst price target
+    <li><strong>Stripe</strong> - payment processing for Pro subscriptions.</li>
+    <li><strong>Yahoo Finance (via yfinance)</strong> - source of analyst price target
     and consensus data. We do not share your personal data with Yahoo Finance.</li>
-    <li><strong>SEC EDGAR</strong> — source of the stock ticker universe. Public
+    <li><strong>SEC EDGAR</strong> - source of the stock ticker universe. Public
     government data; no personal data is involved.</li>
   </ul>
 
@@ -5122,7 +5114,7 @@ def render_disclaimer_page() -> str:
   analyst consensus price targets from third-party sources and present them in a ranked,
   filterable format. We do not generate, verify, or endorse any of the analyst estimates
   shown on this site.</p>
-  <p>The "upside potential" figures shown are simple arithmetic — the percentage difference
+  <p>The "upside potential" figures shown are simple arithmetic - the percentage difference
   between an analyst's consensus price target and the current market price. They are not
   predictions, forecasts, or recommendations.</p>
 
@@ -5142,7 +5134,7 @@ def render_disclaimer_page() -> str:
   guarantees of future performance.</p>
   <p>Analyst estimates are frequently wrong. They are subject to conflicts of interest,
   model assumptions, and market conditions that can change rapidly. Our own accuracy
-  tracker exists to make this transparency explicit — past accuracy data on this site
+  tracker exists to make this transparency explicit - past accuracy data on this site
   shows that analyst targets are missed as often as they are hit.</p>
   <p>A high ranking on StockUpside.io means only that a stock has a large gap between
   its current price and the average analyst price target. It does not mean the stock
@@ -5168,7 +5160,7 @@ def render_disclaimer_page() -> str:
 
   <h2>No Liability</h2>
   <p>To the fullest extent permitted by law, StockUpside.io, its operators, and
-  contributors accept no liability for any loss or damage — financial or otherwise —
+  contributors accept no liability for any loss or damage - financial or otherwise -
   arising directly or indirectly from your use of, or reliance on, any information
   on this website.</p>
 
@@ -5199,7 +5191,7 @@ def render_disclaimer_page() -> str:
 
 @app.route("/firm-track-record")
 def firm_track_record_page():
-    """Public leaderboard of analyst firm win rates — the page the
+    """Public leaderboard of analyst firm win rates - the page the
     'See full firm rankings →' link on each stock page points to."""
     con = get_db()
     rows = con.execute("""
@@ -5220,13 +5212,13 @@ def firm_track_record_page():
     rows_html = ""
     if not rows:
         rows_html = """<tr><td colspan="4" style="text-align:center;color:var(--text2);padding:32px">
-            No firms have 5+ resolved calls yet. Check back soon — this builds up automatically
+            No firms have 5+ resolved calls yet. Check back soon - this builds up automatically
             as we track upgrade/downgrade calls over time.</td></tr>"""
     else:
         for i, (firm, total, correct, avg_ret) in enumerate(rows, 1):
             win_rate = round(100 * correct / total, 1)
             color = "var(--green)" if win_rate >= 60 else "var(--amber)" if win_rate >= 45 else "var(--red)"
-            avg_ret_str = f"{avg_ret:+.1f}%" if avg_ret is not None else "—"
+            avg_ret_str = f"{avg_ret:+.1f}%" if avg_ret is not None else "-"
             rows_html += f"""<tr>
                 <td style="font-family:var(--font-mono);color:var(--text3)">{i}</td>
                 <td>{escape(firm)}</td>
@@ -5258,7 +5250,7 @@ def firm_track_record_page():
     <h1>▲ Analyst Firm Track Record</h1>
     <div class="ftr-sub">
       Win rate = % of upgrade/downgrade calls where the stock moved in the predicted direction
-      90 days later, across every stock we track. Requires 5+ resolved calls to appear — newer
+      90 days later, across every stock we track. Requires 5+ resolved calls to appear - newer
       or less-frequent firms will show up here as we accumulate more history.
       <a href="/blog/how-we-rank-stocks-by-analyst-upside">Read our full methodology →</a>
     </div>
@@ -5379,7 +5371,7 @@ def api_stock_history(ticker: str):
     con  = get_db()
     today_str = datetime.date.today().isoformat()
 
-    # Earliest snapshot date — used by the frontend to show "data available
+    # Earliest snapshot date - used by the frontend to show "data available
     # since X" rather than empty period tabs that look like bugs.
     first_row = con.execute(
         "SELECT MIN(date) FROM snapshots WHERE ticker=?", (ticker,)
@@ -5477,7 +5469,7 @@ def api_stock_history(ticker: str):
 @limiter.limit("600 per hour")
 def api_stock_calls(ticker):
     """Recent analyst calls for a specific ticker, with each firm's
-    overall track record inlined — shown on the stock detail page."""
+    overall track record inlined - shown on the stock detail page."""
     ticker = ticker.upper()
     con = get_db()
     calls = con.execute("""
@@ -5512,12 +5504,9 @@ def api_stock_calls(ticker):
 def api_accuracy():
     con = get_db()   # use get_db(), not sqlite3.connect directly
 
-    # Overall hit rate per checkpoint. Use REPORTABLE_CHECKPOINTS (not
-    # CHECKPOINTS) so the 180/365/730-day tabs — populated by
-    # backfill_accuracy.py rather than the nightly check_performance() job —
-    # actually have data to show instead of silently returning nothing.
+    # Overall hit rate per checkpoint
     checkpoints = {}
-    for days in REPORTABLE_CHECKPOINTS:
+    for days in CHECKPOINTS:
         row = con.execute("""
             SELECT
                 COUNT(*) as total,
@@ -5549,7 +5538,7 @@ def api_accuracy():
         FROM performance ORDER BY actual_return ASC LIMIT 10
     """).fetchall()
 
-    # Accuracy by consensus rating — join on snapshots.date (not snapshot_date)
+    # Accuracy by consensus rating - join on snapshots.date (not snapshot_date)
     by_consensus = con.execute("""
         SELECT s.consensus,
                COUNT(*) as total,
@@ -5562,7 +5551,7 @@ def api_accuracy():
         ORDER BY avg_return DESC
     """).fetchall()
 
-    # Accuracy by sector — snapshots has no sector column, so pull it from
+    # Accuracy by sector - snapshots has no sector column, so pull it from
     # the cached stock data instead
     stocks      = get_stocks_cached()
     sector_map  = {s["ticker"]: s["sector"] for s in stocks}
@@ -5687,7 +5676,7 @@ def api_changes():
 
         curr_score = CONSENSUS_SCORE.get(curr_con, 3)
 
-        # No past data — brand new coverage.
+        # No past data - brand new coverage.
         # Quality gates: require at least 2 analysts and upside below 500%
         # to filter out penny stocks where 1 analyst sets an absurd target.
         if past_con is None:
@@ -5723,7 +5712,7 @@ def api_changes():
         elif score_delta < 0:
             downgraded.append(entry)
         elif count_delta >= 3:
-            # Same consensus but meaningfully more analysts — treat as bullish signal
+            # Same consensus but meaningfully more analysts - treat as bullish signal
             upgraded.append(entry)
         elif count_delta <= -3:
             downgraded.append(entry)
@@ -5748,7 +5737,7 @@ def api_changes():
 @app.route("/api/accuracy/<ticker>")
 @limiter.limit("600 per hour")
 def api_accuracy_ticker(ticker):
-    """Per-stock accuracy history — used on individual stock pages."""
+    """Per-stock accuracy history - used on individual stock pages."""
     ticker = ticker.upper()
     con = get_db()
 
@@ -5837,7 +5826,7 @@ def _momentum_html(s: dict) -> str:
       <div style="margin-top:16px">
         <div class="sp-stat">
           <span class="sp-stat-l">Current</span>
-          <span class="sp-stat-v" style="color:{color}">{s.get("consensus","—")}</span>
+          <span class="sp-stat-v" style="color:{color}">{s.get("consensus","-")}</span>
         </div>
         {history_rows}
       </div>
@@ -5846,7 +5835,7 @@ def _momentum_html(s: dict) -> str:
 def _render_analyst_calls(ticker: str) -> str:
     """Render the 'Recent Analyst Calls' card showing per-firm rating
     changes with each firm's track record inlined. Returns '' if there's
-    no call history yet — expected for the first weeks after this
+    no call history yet - expected for the first weeks after this
     feature launches, since the weekly collector job needs time to
     accumulate and resolve enough 90-day outcomes to be meaningful."""
     con = get_db()
@@ -5880,7 +5869,7 @@ def _render_analyst_calls(ticker: str) -> str:
 
         action_color = {"up": "var(--green)", "down": "var(--red)"}.get(action, "var(--text2)")
         action_label = {"up": "↑ Upgrade", "down": "↓ Downgrade",
-                         "init": "● Initiated", "main": "— Reiterated"}.get(action, action)
+                         "init": "● Initiated", "main": "- Reiterated"}.get(action, action)
         firm_safe = escape(firm)
         grade_safe = escape(f"{from_grade} → {to_grade}" if from_grade else to_grade)
 
@@ -5910,7 +5899,7 @@ def _render_analyst_calls(ticker: str) -> str:
 
 def _render_similar_stocks(similar: list | None) -> str:
     """Render the 'Similar Stocks' card for the stock detail page.
-    Returns '' (renders nothing) if there's nothing to show — this is
+    Returns '' (renders nothing) if there's nothing to show - this is
     expected for thinly-covered sectors."""
     if not similar:
         return ""
@@ -5942,7 +5931,7 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
     # Defense in depth: `s` comes from generate.py's Yahoo Finance fetch.
     # That data isn't directly attacker-controlled, but company names/
     # tickers are still external input rendered into HTML attributes,
-    # <title>, and <meta> tags below — escape the string fields so a
+    # <title>, and <meta> tags below - escape the string fields so a
     # stray `<`, `"`, or `&` in upstream data can't break out of context.
     s = dict(s)
     for _field in ("name", "ticker", "sector", "consensus", "market_cap"):
@@ -5951,7 +5940,7 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
 
     total_analysts = s["strong_buy"] + s["buy"] + s["hold"] + s["sell"] or 1
     bull_pct = round((s["strong_buy"] + s["buy"]) / total_analysts * 100)
-    # Helper at top of render_stock_page — add these two lines after the bull_pct line:
+    # Helper at top of render_stock_page - add these two lines after the bull_pct line:
     def _fmt_cap(mc):
         if not mc: return "N/A"
         if mc >= 1e12: return f"${mc/1e12:.2f}T"
@@ -5976,12 +5965,12 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
   <title>{s["ticker"]} Analyst Price Target - {s["name"]} Stock Forecast | StockUpside.io</title>
   <meta name="description" content="Wall Street analysts have a consensus price target of ${s["target_price"]} for {s["name"]} ({s["ticker"]}), {f'implying {s["upside_pct"]}% upside' if s["upside_pct"] >= 0 else f'which is {abs(s["upside_pct"])}% below'} the current price of ${s["current_price"]}. {s["analyst_count"]} analysts covered. Consensus: {s["consensus"]}. {s["sector"]} sector."/>
   <meta property="og:type"        content="article"/>
-  <meta property="og:title"       content="{s["ticker"]} — {s["upside_pct"]}% Analyst Upside | StockUpside.io"/>
+  <meta property="og:title"       content="{s["ticker"]} - {s["upside_pct"]}% Analyst Upside | StockUpside.io"/>
   <meta property="og:description" content="{s["analyst_count"]} analysts. Target: ${s["target_price"]}. Current: ${s["current_price"]}. Consensus: {s["consensus"]}."/>
   <meta property="og:url"         content="https://stockupside.io/stocks/{s["ticker"]}"/>
   <meta property="og:image"       content="https://stockupside.io/og-image.png"/>
   <meta name="twitter:card"       content="summary_large_image"/>
-  <meta name="twitter:title"      content="{s["ticker"]} — {s["upside_pct"]}% Analyst Upside | StockUpside.io"/>
+  <meta name="twitter:title"      content="{s["ticker"]} - {s["upside_pct"]}% Analyst Upside | StockUpside.io"/>
   <meta name="twitter:description" content="{s["analyst_count"]} analysts covering {s["ticker"]}. Consensus: {s["consensus"]}. Target: ${s["target_price"]}."/>
   <meta name="twitter:image"      content="https://stockupside.io/og-image.png"/>
   <meta name="robots" content="index, follow"/>
@@ -6398,7 +6387,7 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
     }}
 
     function delta(val, suffix, invert) {{
-      if (val == null) return '<span style="color:var(--text3)">—</span>';
+      if (val == null) return '<span style="color:var(--text3)">-</span>';
       const pos = invert ? val < 0 : val > 0;
       const cls = val === 0 ? "color:var(--text2)" : pos ? "color:#00e676" : "color:#ff5252";
       const sign = val > 0 ? "+" : "";
@@ -6421,22 +6410,22 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
         <div class="sp-hist-grid">
           <div class="sp-hist-col">
             <div class="sp-hist-colhead">THEN</div>
-            <div class="sp-stat"><span class="sp-stat-l">Price</span><span class="sp-stat-v">${{p.current_price != null ? "$" + p.current_price : "—"}}</span></div>
-            <div class="sp-stat"><span class="sp-stat-l">Target</span><span class="sp-stat-v">${{p.target_price != null ? "$" + p.target_price : "—"}}</span></div>
-            <div class="sp-stat"><span class="sp-stat-l">Upside</span><span class="sp-stat-v">${{p.upside_pct != null ? (p.upside_pct >= 0 ? "+" : "") + p.upside_pct + "%" : "—"}}</span></div>
-            <div class="sp-stat"><span class="sp-stat-l">Consensus</span><span class="sp-stat-v" style="color:${{consensusColor(p.consensus)}}">${{p.consensus || "—"}}</span></div>
-            <div class="sp-stat"><span class="sp-stat-l">Analysts</span><span class="sp-stat-v">${{p.analyst_count != null ? p.analyst_count : "—"}}</span></div>
-            <div class="sp-stat"><span class="sp-stat-l">Rank</span><span class="sp-stat-v">#${{p.rank != null ? p.rank : "—"}}</span></div>
+            <div class="sp-stat"><span class="sp-stat-l">Price</span><span class="sp-stat-v">${{p.current_price != null ? "$" + p.current_price : "-"}}</span></div>
+            <div class="sp-stat"><span class="sp-stat-l">Target</span><span class="sp-stat-v">${{p.target_price != null ? "$" + p.target_price : "-"}}</span></div>
+            <div class="sp-stat"><span class="sp-stat-l">Upside</span><span class="sp-stat-v">${{p.upside_pct != null ? (p.upside_pct >= 0 ? "+" : "") + p.upside_pct + "%" : "-"}}</span></div>
+            <div class="sp-stat"><span class="sp-stat-l">Consensus</span><span class="sp-stat-v" style="color:${{consensusColor(p.consensus)}}">${{p.consensus || "-"}}</span></div>
+            <div class="sp-stat"><span class="sp-stat-l">Analysts</span><span class="sp-stat-v">${{p.analyst_count != null ? p.analyst_count : "-"}}</span></div>
+            <div class="sp-stat"><span class="sp-stat-l">Rank</span><span class="sp-stat-v">#${{p.rank != null ? p.rank : "-"}}</span></div>
           </div>
           <div class="sp-hist-divider"></div>
           <div class="sp-hist-col">
             <div class="sp-hist-colhead">CHANGE SINCE THEN</div>
-            <div class="sp-stat"><span class="sp-stat-l">Price</span><span class="sp-stat-v" style="color:${{priceColor}}">${{p.price_change_pct != null ? priceSign + p.price_change_pct + "%" : "—"}}</span></div>
-            <div class="sp-stat"><span class="sp-stat-l">Target</span><span class="sp-stat-v" style="color:${{p.target_change_pct != null ? (p.target_change_pct > 0 ? "#00e676" : p.target_change_pct < 0 ? "#ff5252" : "var(--text2)") : "var(--text3)"}}">${{p.target_change_pct != null ? (p.target_change_pct >= 0 ? "+" : "") + p.target_change_pct + "%" : "—"}}</span></div>
-            <div class="sp-stat"><span class="sp-stat-l">Upside</span><span class="sp-stat-v" style="color:${{upsideColor}}">${{p.upside_change != null ? upsideSign + p.upside_change + "pp" : "—"}}</span></div>
+            <div class="sp-stat"><span class="sp-stat-l">Price</span><span class="sp-stat-v" style="color:${{priceColor}}">${{p.price_change_pct != null ? priceSign + p.price_change_pct + "%" : "-"}}</span></div>
+            <div class="sp-stat"><span class="sp-stat-l">Target</span><span class="sp-stat-v" style="color:${{p.target_change_pct != null ? (p.target_change_pct > 0 ? "#00e676" : p.target_change_pct < 0 ? "#ff5252" : "var(--text2)") : "var(--text3)"}}">${{p.target_change_pct != null ? (p.target_change_pct >= 0 ? "+" : "") + p.target_change_pct + "%" : "-"}}</span></div>
+            <div class="sp-stat"><span class="sp-stat-l">Upside</span><span class="sp-stat-v" style="color:${{upsideColor}}">${{p.upside_change != null ? upsideSign + p.upside_change + "pp" : "-"}}</span></div>
             <div class="sp-stat"><span class="sp-stat-l">Consensus</span><span class="sp-stat-v">${{p.consensus_changed ? '<span style="color:#ffd740">Changed</span>' : '<span style="color:var(--text3)">Unchanged</span>'}}</span></div>
-            <div class="sp-stat"><span class="sp-stat-l">Analysts</span><span class="sp-stat-v" style="color:${{p.analyst_change != null ? (p.analyst_change > 0 ? "#00e676" : p.analyst_change < 0 ? "#ff5252" : "var(--text2)") : "var(--text3)"}}">${{p.analyst_change != null ? (p.analyst_change > 0 ? "+" : "") + p.analyst_change : "—"}}</span></div>
-            <div class="sp-stat"><span class="sp-stat-l">Rank</span><span class="sp-stat-v" style="color:${{rankColor}}">${{p.rank_change != null ? rankSign + p.rank_change + " " + rankNote : "—"}}</span></div>
+            <div class="sp-stat"><span class="sp-stat-l">Analysts</span><span class="sp-stat-v" style="color:${{p.analyst_change != null ? (p.analyst_change > 0 ? "#00e676" : p.analyst_change < 0 ? "#ff5252" : "var(--text2)") : "var(--text3)"}}">${{p.analyst_change != null ? (p.analyst_change > 0 ? "+" : "") + p.analyst_change : "-"}}</span></div>
+            <div class="sp-stat"><span class="sp-stat-l">Rank</span><span class="sp-stat-v" style="color:${{rankColor}}">${{p.rank_change != null ? rankSign + p.rank_change + " " + rankNote : "-"}}</span></div>
           </div>
         </div>`;
     }}
@@ -6496,7 +6485,7 @@ def render_stock_page(s: dict, similar: list | None = None) -> str:
           '#00e676' if s.get('conviction_score',0) >= 75 else
           '#ffd740' if s.get('conviction_score',0) >= 50 else
           '#ff9800' if s.get('conviction_score',0) >= 25 else '#ff5252'
-        }">{s.get("conviction_score", "—")}</div>
+        }">{s.get("conviction_score", "-")}</div>
         <div class="sp-conv-label">out of 100</div>
       </div>
       <div class="sp-conv-bars">
@@ -6702,10 +6691,10 @@ threading.Thread(target=weekly_digest, daemon=True).start()
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     print(f"\n🚀  StockUpside.io is running at http://localhost:{port}\n")
-    # Only open a browser tab in local dev — never on a headless server
+    # Only open a browser tab in local dev - never on a headless server
     if os.environ.get("ENV", "development") == "development":
         threading.Timer(1.2, lambda: webbrowser.open(f"http://localhost:{port}")).start()
-    # Bind to localhost only — nginx (reverse proxy) connects via
+    # Bind to localhost only - nginx (reverse proxy) connects via
     # localhost:5000. Binding to 0.0.0.0 would expose the Flask dev
     # server directly to the internet over plain HTTP, bypassing
     # TLS, HSTS, and nginx-level protections entirely.
