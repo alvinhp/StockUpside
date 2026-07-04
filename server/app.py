@@ -690,7 +690,15 @@ def set_generating(val: bool):
     with _generating_lock:
         _generating = val
 
+# Checkpoints the nightly job actively resolves from live snapshots.
 CHECKPOINTS = [30, 60, 90]
+
+# All checkpoints that may exist in the `performance` table and that the
+# accuracy tab should be able to report on. This includes the long-horizon
+# checkpoints (180/365/730) that backfill_accuracy.py populates directly
+# from historical price data — those never go through check_performance(),
+# so they must stay listed here even though they're not in CHECKPOINTS.
+REPORTABLE_CHECKPOINTS = [30, 60, 90, 180, 365, 730]
 
 def check_performance():
     """
@@ -5504,9 +5512,12 @@ def api_stock_calls(ticker):
 def api_accuracy():
     con = get_db()   # use get_db(), not sqlite3.connect directly
 
-    # Overall hit rate per checkpoint
+    # Overall hit rate per checkpoint. Use REPORTABLE_CHECKPOINTS (not
+    # CHECKPOINTS) so the 180/365/730-day tabs — populated by
+    # backfill_accuracy.py rather than the nightly check_performance() job —
+    # actually have data to show instead of silently returning nothing.
     checkpoints = {}
-    for days in CHECKPOINTS:
+    for days in REPORTABLE_CHECKPOINTS:
         row = con.execute("""
             SELECT
                 COUNT(*) as total,
