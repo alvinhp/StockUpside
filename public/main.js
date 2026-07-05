@@ -41,6 +41,11 @@ let minConviction = 0;
 let query = "";
 let detail = null;
 let tickTimer = null;
+let priceRefreshTimer = null;
+// How often to silently re-pull prices from /api/stocks and merge them in,
+// without a full page reload. Matches the price_refresh.py cron cadence —
+// no point polling faster than the server-side cache actually updates.
+const PRICE_REFRESH_MS = 3 * 60 * 1000; // 3 minutes
 let currentPage = 1;
 const PAGE_SIZE = 100;
 // ── Format helpers ─────────────────────────────────────────────────────────────
@@ -135,6 +140,7 @@ async function load() {
             renderWatchlistPage();
             fixStickyOffset();
             startTicker();
+            startPriceRefresh();
             return;
         }
         if (isAlertsPage) {
@@ -148,11 +154,62 @@ async function load() {
         renderAll();
         fixStickyOffset();
         startTicker();
+        startPriceRefresh();
     }
     catch (e) {
         setLoader(false);
         document.getElementById("app").innerHTML = errScreen(String(e));
     }
+}
+// Silently re-pull /api/stocks in the background and merge fresh prices
+// into the existing `all` array, then re-render just the table rows —
+// no loader flash, no scroll jump, no re-fetch of stats/watchlist/tokens.
+// Skipped on the alerts page (different data shape) and while a stock
+// detail modal is open (don't want the modal's numbers shifting under
+// the user mid-read).
+async function refreshPrices() {
+    if (isAlertsPage || detail)
+        return;
+    if (document.hidden)
+        return; // don't burn requests on a backgrounded tab
+    try {
+        const r = await fetch(`${API}/stocks${proToken ? `?token=${encodeURIComponent(proToken)}` : ""}`);
+        if (!r.ok)
+            return;
+        const sd = await r.json();
+        const byTicker = new Map(sd.stocks.map(s => [s.ticker, s]));
+        let changed = false;
+        for (const s of all) {
+            const fresh = byTicker.get(s.ticker);
+            if (!fresh)
+                continue;
+            if (fresh.current_price !== s.current_price) {
+                s.current_price = fresh.current_price;
+                s.upside_pct = fresh.upside_pct;
+                s.rank = fresh.rank;
+                s.conviction_score = fresh.conviction_score;
+                changed = true;
+            }
+        }
+        if (!changed)
+            return;
+        if (isWatchlistPage) {
+            applyFilters();
+            renderWatchlistRows();
+        }
+        else {
+            applyFilters();
+            renderRows();
+        }
+    }
+    catch {
+        // Non-fatal — just skip this cycle and try again next interval.
+    }
+}
+function startPriceRefresh() {
+    if (priceRefreshTimer)
+        clearInterval(priceRefreshTimer);
+    priceRefreshTimer = setInterval(refreshPrices, PRICE_REFRESH_MS);
 }
 async function toggleWatchlist(ticker, starEl, isLocked = false) {
     if (isLocked) {
