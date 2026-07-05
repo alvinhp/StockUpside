@@ -690,7 +690,15 @@ def set_generating(val: bool):
     with _generating_lock:
         _generating = val
 
+# Checkpoints the nightly job actively resolves from live snapshots.
 CHECKPOINTS = [30, 60, 90]
+
+# All checkpoints that may exist in the `performance` table and that the
+# accuracy tab should be able to report on. This includes the long-horizon
+# checkpoints (180/365/730) that backfill_accuracy.py populates directly
+# from historical price data - those never go through check_performance(),
+# so they must stay listed here even though they're not in CHECKPOINTS.
+REPORTABLE_CHECKPOINTS = [30, 60, 90, 180, 365, 730]
 
 def check_performance():
     """
@@ -4507,10 +4515,22 @@ fetch(`/api/accuracy?days=${{currentDays}}`)
       let cards = '<div class="ac-grid">';
       for (const {{days: d, label: lbl}} of PERIODS) {{
         const c = cp[String(d)];
+        const isLongHorizon = d >= 180;
+        const caveat = isLongHorizon
+          ? `<div style="margin-top:10px;padding:8px 10px;border-radius:4px;
+               background:rgba(255,215,64,0.08);border:1px solid rgba(255,215,64,0.25);
+               font-size:11px;line-height:1.5;color:var(--text2)">
+               ⚠ Approximated: uses today's analyst target applied to past dates,
+               not the target actually in effect then. Hit rates for this window
+               run artificially low as a result &mdash; treat as directional, not
+               precise, until real point-in-time targets are backfilled.
+             </div>`
+          : '';
         if (!c || c.total === 0) {{
           cards += `<div class="ac-card">
             <div class="ac-card-title">${{lbl.toUpperCase()}} ACCURACY</div>
             <div style="color:var(--text3);font-size:12px">No data yet</div>
+            ${{caveat}}
           </div>`;
           continue;
         }}
@@ -4528,6 +4548,7 @@ fetch(`/api/accuracy?days=${{currentDays}}`)
               ${{c.avg_return>=0?'+':''}}${{c.avg_return}}%</span></div>
           <div class="ac-stat"><span class="ac-stat-l">Avg return (hits)</span>
             <span class="ac-stat-v" style="color:#69f0ae">+${{c.avg_return_hits}}%</span></div>
+          ${{caveat}}
         </div>`;
       }}
       cards += '</div>';
@@ -5504,9 +5525,12 @@ def api_stock_calls(ticker):
 def api_accuracy():
     con = get_db()   # use get_db(), not sqlite3.connect directly
 
-    # Overall hit rate per checkpoint
+    # Overall hit rate per checkpoint. Use REPORTABLE_CHECKPOINTS (not
+    # CHECKPOINTS) so the 180/365/730-day tabs - populated by
+    # backfill_accuracy.py rather than the nightly check_performance() job -
+    # actually have data to show instead of silently returning nothing.
     checkpoints = {}
-    for days in CHECKPOINTS:
+    for days in REPORTABLE_CHECKPOINTS:
         row = con.execute("""
             SELECT
                 COUNT(*) as total,
@@ -6548,9 +6572,12 @@ fetch('/api/accuracy/{s["ticker"]}')
       const hit = r.hit_target
         ? '<span style="color:#00e676">✓ Hit</span>'
         : '<span style="color:#f85149">✗ Miss</span>';
+      const approx = r.days_later >= 180
+        ? ' <span style="color:var(--text3);font-size:10px" title="Uses today\\'s target applied retroactively, not the target actually in effect on this date. Treat as directional.">⚠</span>'
+        : '';
       return `<tr style="border-bottom:1px solid var(--border)">
         <td style="padding:8px 10px;color:var(--text3);font-size:11px">${{r.snapshot_date}}</td>
-        <td style="padding:8px 10px;font-family:var(--font-mono)">${{r.days_later}}d</td>
+        <td style="padding:8px 10px;font-family:var(--font-mono)">${{r.days_later}}d${{approx}}</td>
         <td style="padding:8px 10px;font-family:var(--font-mono)">${{r.predicted_upside}}%</td>
         <td style="padding:8px 10px;font-family:var(--font-mono);color:${{col}}">
           ${{r.actual_return >= 0 ? '+' : ''}}${{r.actual_return}}%</td>
