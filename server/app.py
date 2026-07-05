@@ -5416,7 +5416,7 @@ def api_stock_history(ticker: str):
 
         row = con.execute("""
             SELECT date, rank, current_price, target_price, upside_pct,
-                   consensus, analyst_count
+                   consensus, analyst_count, source
             FROM snapshots
             WHERE ticker=? AND date BETWEEN ? AND ?
             ORDER BY ABS(julianday(date) - julianday(?)) ASC
@@ -5426,7 +5426,7 @@ def api_stock_history(ticker: str):
         if not row:
             continue
 
-        snap_date, rank, price, target, upside, consensus, analyst_count = row
+        snap_date, rank, price, target, upside, consensus, analyst_count, source = row
 
         # Compute deltas vs today so the frontend can highlight changes
         today_price  = today_stock["current_price"]
@@ -5447,13 +5447,27 @@ def api_stock_history(ticker: str):
         today_target   = today_stock["target_price"]
         today_analysts = today_stock["analyst_count"]
 
+        # The old backfill_accuracy.py wrote historical rows using TODAY's
+        # target/analyst-count applied retroactively (documented limitation -
+        # real point-in-time targets weren't available at the time). Any
+        # delta computed from that against today's own value is always
+        # exactly 0 - not a genuine "unchanged" signal, just an artifact of
+        # comparing today's number to itself. Suppress these two fields
+        # (render as "-" on the frontend) specifically for that source,
+        # rather than show a misleading "+0%" / "0". Real live snapshots
+        # (source IS NULL) and any future real point-in-time backfill
+        # (e.g. source='backfill_fmp' once populated with actual historical
+        # targets) are unaffected and show real deltas as normal.
+        is_approximated_target = (source == "backfill")
+
         target_change_pct = (
             round((today_target - target) / target * 100, 1)
-            if target else None
+            if target and not is_approximated_target else None
         )
         analyst_change = (
             (today_analysts - analyst_count)
-            if analyst_count is not None and today_analysts is not None else None
+            if analyst_count is not None and today_analysts is not None
+               and not is_approximated_target else None
         )
 
         periods_out.append({
