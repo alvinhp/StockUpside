@@ -822,6 +822,7 @@ function header() {
     <nav class="hdr-nav">
       <a href="/changes" class="hdr-link">Rating Changes</a>
       <a href="/accuracy" class="hdr-link">Accuracy</a>
+      <a href="/charts/pe-vs-upside" class="hdr-link">Charts</a>
       <a href="/analyst-track-record" class="hdr-link">Track Record</a>
       <a href="/firm-track-record" class="hdr-link">Firm Rankings</a>
       <a href="/stocks" class="hdr-link">All Stocks</a>
@@ -1247,6 +1248,7 @@ function mobileNavTabs() {
     return `
     <a href="/changes" class="mob-tab">Rating Changes</a>
     <a href="/accuracy" class="mob-tab">Accuracy</a>
+    <a href="/charts/pe-vs-upside" class="mob-tab">Charts</a>
     <a href="/analyst-track-record" class="mob-tab">Track Record</a>
     <a href="/stocks" class="mob-tab">All Stocks</a>
     <a href="/sectors" class="mob-tab">Sectors</a>
@@ -1260,6 +1262,7 @@ function footer() {
     <nav class="ftr-mobile-nav">
       <a href="/changes" class="ftr-nav-link">Rating Changes</a>
       <a href="/accuracy" class="ftr-nav-link">Accuracy</a>
+      <a href="/charts/pe-vs-upside" class="ftr-nav-link">Charts</a>
       <a href="/analyst-track-record" class="ftr-nav-link">Track Record</a>
       <a href="/stocks"   class="ftr-nav-link">All Stocks</a>
       <a href="/sectors"  class="ftr-nav-link">Sectors</a>

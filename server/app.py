@@ -3938,7 +3938,11 @@ def pe_upside_chart_page():
 @limiter.limit("300 per hour")
 def api_pe_upside_chart():
     """Data for the PE-vs-upside scatter chart: one point per stock with a
-    valid (positive, non-extreme) trailing PE ratio and a computed upside.
+    valid (positive, non-extreme) PE ratio and a computed upside.
+
+    Query params:
+      - metric: "trailing" (default) or "forward" - which PE field to plot.
+      - min_cap: minimum market cap in dollars to include (default 0 = all).
 
     Filtering rationale:
       - pe_ratio must be > 0 and <= PE_CAP: negative/zero PE (unprofitable
@@ -3947,29 +3951,42 @@ def api_pe_upside_chart():
         cluster near the origin. These stocks still exist in the full
         dataset and other views - they're just not meaningful on THIS
         specific chart's axis.
-      - upside_pct is clamped to [-UPSIDE_CAP, UPSIDE_CAP] for the same
-        reason (a handful of speculative small-caps with 500%+ analyst
-        upside would otherwise blow out the y-axis); the clamped flag is
-        returned per-point so the frontend can visually mark clamped
-        points (e.g. a small arrow) rather than silently misrepresent them.
+      - upside_pct is clamped asymmetrically: floored at -100% (a stock
+        cannot lose more than 100% of its value, so anything below that
+        is a data artifact, not a real number) and capped at +UPSIDE_CAP%
+        on the upside (a handful of speculative small-caps with 500%+
+        analyst upside would otherwise blow out the y-axis). The clamped
+        flag is returned per-point so the frontend can visually mark
+        clamped points rather than silently misrepresent them.
     """
     stocks = get_stocks_cached()
 
+    metric = request.args.get("metric", "trailing")
+    pe_field = "forward_pe" if metric == "forward" else "pe_ratio"
+
+    try:
+        min_cap = float(request.args.get("min_cap", 0))
+    except (TypeError, ValueError):
+        min_cap = 0
+
     PE_CAP = 100
-    UPSIDE_CAP = 150
+    UPSIDE_FLOOR = -100
+    UPSIDE_CAP = 200
 
     points = []
     for s in stocks:
-        pe = s.get("pe_ratio")
+        pe = s.get(pe_field)
         upside = s.get("upside_pct")
         cap = s.get("market_cap_raw") or 0
         if not pe or pe <= 0 or pe > PE_CAP:
             continue
         if upside is None or cap <= 0:
             continue
+        if cap < min_cap:
+            continue
 
-        clamped = upside > UPSIDE_CAP or upside < -UPSIDE_CAP
-        upside_plot = max(-UPSIDE_CAP, min(UPSIDE_CAP, upside))
+        clamped = upside > UPSIDE_CAP or upside < UPSIDE_FLOOR
+        upside_plot = max(UPSIDE_FLOOR, min(UPSIDE_CAP, upside))
 
         points.append({
             "ticker":      s["ticker"],
@@ -3986,7 +4003,9 @@ def api_pe_upside_chart():
         "points": points,
         "count": len(points),
         "pe_cap": PE_CAP,
+        "upside_floor": UPSIDE_FLOOR,
         "upside_cap": UPSIDE_CAP,
+        "metric": metric,
         "generated": datetime.date.today().isoformat(),
     })
 
@@ -4528,6 +4547,10 @@ def render_pe_upside_chart_page() -> str:
   </p>
 
   <div class="pu-controls">
+    <select id="pu-metric-filter">
+      <option value="trailing">Trailing P/E</option>
+      <option value="forward">Forward P/E</option>
+    </select>
     <select id="pu-sector-filter">
       <option value="">All sectors</option>
     </select>
@@ -4537,6 +4560,14 @@ def render_pe_upside_chart_page() -> str:
       <option value="Buy">Buy</option>
       <option value="Hold">Hold</option>
       <option value="Sell">Sell</option>
+    </select>
+    <select id="pu-mcap-filter">
+      <option value="0">Any (Nano+)</option>
+      <option value="50000000">Micro+ (&gt;$50M)</option>
+      <option value="250000000">Small+ (&gt;$250M)</option>
+      <option value="2000000000">Mid+ (&gt;$2B)</option>
+      <option value="10000000000">Large+ (&gt;$10B)</option>
+      <option value="200000000000">Mega+ (&gt;$200B)</option>
     </select>
   </div>
 
@@ -4565,20 +4596,30 @@ def render_pe_upside_chart_page() -> str:
 <script>
 (function() {{
   let allPoints = [];
-  let peCap = 100, upsideCap = 150;
+  let peCap = 100, upsideFloor = -100, upsideCap = 200, currentMetric = "trailing";
 
   const consensusColor = c => ({{
     "Strong Buy": "#00e676", "Buy": "#69f0ae", "Hold": "#ffd740", "Sell": "#ff5252"
   }}[c] || "#ffd740");
 
+  function fmtCap(mc) {{
+    if (!mc) return "N/A";
+    if (mc >= 1e12) return "$" + (mc/1e12).toFixed(2) + "T";
+    if (mc >= 1e9)  return "$" + (mc/1e9).toFixed(0) + "B";
+    return "$" + (mc/1e6).toFixed(0) + "M";
+  }}
+
   function populateSectorFilter(points) {{
-    const sectors = [...new Set(points.map(p => p.sector))].sort();
     const sel = document.getElementById("pu-sector-filter");
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">All sectors</option>';
+    const sectors = [...new Set(points.map(p => p.sector))].sort();
     sectors.forEach(s => {{
       const opt = document.createElement("option");
       opt.value = s; opt.textContent = s;
       sel.appendChild(opt);
     }});
+    if (sectors.includes(prev)) sel.value = prev;
   }}
 
   function radiusFor(cap, minCap, maxCap) {{
@@ -4605,11 +4646,11 @@ def render_pe_upside_chart_page() -> str:
     }}
 
     const W = wrap.clientWidth || 1000, H = 560;
-    const M = {{ top: 16, right: 20, bottom: 40, left: 50 }};
+    const M = {{ top: 16, right: 20, bottom: 40, left: 56 }};
     const plotW = W - M.left - M.right;
     const plotH = H - M.top - M.bottom;
 
-    const xMax = peCap, yMin = -upsideCap, yMax = upsideCap;
+    const xMax = peCap, yMin = upsideFloor, yMax = upsideCap;
     const caps = points.map(p => p.market_cap);
     const minCap = Math.min(...caps), maxCap = Math.max(...caps);
 
@@ -4623,15 +4664,16 @@ def render_pe_upside_chart_page() -> str:
       svg += `<line class="pu-gridline" x1="${{xScale(x)}}" y1="${{M.top}}" x2="${{xScale(x)}}" y2="${{M.top+plotH}}"/>`;
       svg += `<text class="pu-axis-label" x="${{xScale(x)}}" y="${{M.top+plotH+16}}" text-anchor="middle">${{x}}x</text>`;
     }}
-    for (let y = yMin; y <= yMax; y += 50) {{
+    for (let y = Math.ceil(yMin/50)*50; y <= yMax; y += 50) {{
       svg += `<line class="pu-gridline" x1="${{M.left}}" y1="${{yScale(y)}}" x2="${{M.left+plotW}}" y2="${{yScale(y)}}"/>`;
       svg += `<text class="pu-axis-label" x="${{M.left-8}}" y="${{yScale(y)+3}}" text-anchor="end">${{y}}%</text>`;
     }}
     // Zero line for upside, emphasized
     svg += `<line x1="${{M.left}}" y1="${{yScale(0)}}" x2="${{M.left+plotW}}" y2="${{yScale(0)}}" stroke="var(--text3)" stroke-width="1"/>`;
 
-    svg += `<text class="pu-axis-label" x="${{M.left+plotW/2}}" y="${{H-4}}" text-anchor="middle">TRAILING P/E</text>`;
-    svg += `<text class="pu-axis-label" x="14" y="${{M.top+plotH/2}}" text-anchor="middle" transform="rotate(-90 14 ${{M.top+plotH/2}})">ANALYST UPSIDE %</text>`;
+    const xLabel = currentMetric === "forward" ? "FORWARD P/E" : "TRAILING P/E";
+    svg += `<text class="pu-axis-label" x="${{M.left+plotW/2}}" y="${{H-4}}" text-anchor="middle">${{xLabel}}</text>`;
+    svg += `<text class="pu-axis-label" x="16" y="${{M.top+plotH/2}}" text-anchor="middle" transform="rotate(-90 16 ${{M.top+plotH/2}})">ANALYST UPSIDE %</text>`;
 
     points.forEach(p => {{
       const r = radiusFor(p.market_cap, minCap, maxCap);
@@ -4647,8 +4689,8 @@ def render_pe_upside_chart_page() -> str:
 
     const clampedCount = points.filter(p => p.clamped).length;
     document.getElementById("pu-note").textContent =
-      `Showing ${{points.length.toLocaleString()}} stocks (P/E 0–${{peCap}}x, upside capped at ±${{upsideCap}}% for readability` +
-      (clampedCount ? ` - ${{clampedCount}} point(s) sit beyond the cap and are shown at the edge` : '') + `).`;
+      `Showing ${{points.length.toLocaleString()}} stocks (P/E 0–${{peCap}}x, upside shown from ${{upsideFloor}}% to +${{upsideCap}}% for readability` +
+      (clampedCount ? ` - ${{clampedCount}} point(s) sit beyond that range and are shown at the edge` : '') + `).`;
 
     // Tooltip via hover
     const tip = document.getElementById("pu-tooltip");
@@ -4663,6 +4705,7 @@ def render_pe_upside_chart_page() -> str:
         tip.innerHTML = `<div class="t-ticker">${{p.ticker}}</div>
           <div>P/E: ${{p.pe_ratio}}x</div>
           <div>Upside: ${{p.upside_real >= 0 ? '+' : ''}}${{p.upside_real}}%</div>
+          <div>Market cap: ${{fmtCap(p.market_cap)}}</div>
           <div>Sector: ${{p.sector}}</div>
           <div>Consensus: ${{p.consensus}}</div>`;
       }});
@@ -4672,11 +4715,15 @@ def render_pe_upside_chart_page() -> str:
   }}
 
   async function load() {{
+    const metric  = document.getElementById("pu-metric-filter").value;
+    const minCap  = document.getElementById("pu-mcap-filter").value;
+    currentMetric = metric;
     try {{
-      const r = await fetch("/api/charts/pe-upside");
+      const r = await fetch(`/api/charts/pe-upside?metric=${{encodeURIComponent(metric)}}&min_cap=${{encodeURIComponent(minCap)}}`);
       const d = await r.json();
       allPoints = d.points;
       peCap = d.pe_cap;
+      upsideFloor = d.upside_floor;
       upsideCap = d.upside_cap;
       populateSectorFilter(allPoints);
       render();
@@ -4686,6 +4733,8 @@ def render_pe_upside_chart_page() -> str:
     }}
   }}
 
+  document.getElementById("pu-metric-filter").addEventListener("change", load);
+  document.getElementById("pu-mcap-filter").addEventListener("change", load);
   document.getElementById("pu-sector-filter").addEventListener("change", render);
   document.getElementById("pu-consensus-filter").addEventListener("change", render);
   window.addEventListener("resize", () => {{ if (allPoints.length) render(); }});
