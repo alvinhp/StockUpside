@@ -3930,6 +3930,66 @@ def stocks_index():
 def accuracy_page():
     return Response(render_accuracy_page(), mimetype="text/html")
 
+@app.route("/charts/pe-vs-upside")
+def pe_upside_chart_page():
+    return Response(render_pe_upside_chart_page(), mimetype="text/html")
+
+@app.route("/api/charts/pe-upside")
+@limiter.limit("300 per hour")
+def api_pe_upside_chart():
+    """Data for the PE-vs-upside scatter chart: one point per stock with a
+    valid (positive, non-extreme) trailing PE ratio and a computed upside.
+
+    Filtering rationale:
+      - pe_ratio must be > 0 and <= PE_CAP: negative/zero PE (unprofitable
+        companies) and extreme outliers (e.g. a stock trading at 900x
+        earnings) would compress the rest of the chart into a useless
+        cluster near the origin. These stocks still exist in the full
+        dataset and other views - they're just not meaningful on THIS
+        specific chart's axis.
+      - upside_pct is clamped to [-UPSIDE_CAP, UPSIDE_CAP] for the same
+        reason (a handful of speculative small-caps with 500%+ analyst
+        upside would otherwise blow out the y-axis); the clamped flag is
+        returned per-point so the frontend can visually mark clamped
+        points (e.g. a small arrow) rather than silently misrepresent them.
+    """
+    stocks = get_stocks_cached()
+
+    PE_CAP = 100
+    UPSIDE_CAP = 150
+
+    points = []
+    for s in stocks:
+        pe = s.get("pe_ratio")
+        upside = s.get("upside_pct")
+        cap = s.get("market_cap_raw") or 0
+        if not pe or pe <= 0 or pe > PE_CAP:
+            continue
+        if upside is None or cap <= 0:
+            continue
+
+        clamped = upside > UPSIDE_CAP or upside < -UPSIDE_CAP
+        upside_plot = max(-UPSIDE_CAP, min(UPSIDE_CAP, upside))
+
+        points.append({
+            "ticker":      s["ticker"],
+            "sector":      s.get("sector") or "Unknown",
+            "pe_ratio":    pe,
+            "upside_pct":  upside_plot,
+            "upside_real": upside,
+            "clamped":     clamped,
+            "market_cap":  cap,
+            "consensus":   s.get("consensus") or "Hold",
+        })
+
+    return jsonify({
+        "points": points,
+        "count": len(points),
+        "pe_cap": PE_CAP,
+        "upside_cap": UPSIDE_CAP,
+        "generated": datetime.date.today().isoformat(),
+    })
+
 @app.route("/sitemap.xml")
 def sitemap_xml():
     stocks = get_stocks_cached()
@@ -3943,6 +4003,7 @@ def sitemap_xml():
         (f"{base}/blog",      "weekly", "0.7"),
         (f"{base}/changes",   "daily", "0.7"),
         (f"{base}/accuracy",  "weekly", "0.6"),
+        (f"{base}/charts/pe-vs-upside", "daily", "0.6"),
         (f"{base}/analyst-track-record", "weekly", "0.6"),
         (f"{base}/watchlist", "monthly", "0.3"),
         (f"{base}/terms",     "monthly", "0.2"),
@@ -4390,6 +4451,247 @@ def render_sector_page(sector_name: str, slug: str, sector_stocks: list) -> str:
   <div>© {yr} StockUpside.io · Updated daily · Not financial advice</div>
   <div class="ftr-r"><a href="/">Home</a> · <a href="/stocks">All Stocks</a> · <a href="/sectors">All Sectors</a></div>
 </footer>
+</body>
+</html>"""
+
+
+def render_pe_upside_chart_page() -> str:
+    yr = datetime.date.today().year
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>P/E vs Analyst Upside Scatter | StockUpside.io</title>
+  <meta name="description" content="Every stock plotted by trailing P/E ratio against analyst consensus upside - find cheap stocks Wall Street still expects to run."/>
+  <meta property="og:type"        content="website"/>
+  <meta property="og:title"       content="P/E vs Analyst Upside Scatter | StockUpside.io"/>
+  <meta property="og:description" content="Value vs. growth, at a glance: every stock plotted by P/E ratio against analyst upside potential."/>
+  <meta property="og:url"         content="https://stockupside.io/charts/pe-vs-upside"/>
+  <meta property="og:image"       content="https://stockupside.io/og-image.png"/>
+  <meta name="twitter:card"       content="summary_large_image"/>
+  <meta name="twitter:title"      content="P/E vs Analyst Upside Scatter | StockUpside.io"/>
+  <meta name="twitter:image"      content="https://stockupside.io/og-image.png"/>
+  <link rel="stylesheet" href="/style.css"/>
+  <style>
+    .pu-wrap {{ max-width:1100px;margin:0 auto;padding:32px 20px 64px; }}
+    .pu-wrap h1 {{ font-family:var(--font-mono);font-size:22px;margin-bottom:6px; }}
+    .pu-sub {{ color:var(--text2);font-size:13px;margin-bottom:24px;max-width:700px; }}
+    .pu-controls {{ display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:20px; }}
+    .pu-controls select {{
+      background:var(--bg2);color:var(--text);border:1px solid var(--border);
+      border-radius:4px;padding:7px 10px;font-family:var(--font-mono);font-size:11px;
+    }}
+    .pu-legend {{ display:flex;gap:14px;flex-wrap:wrap;font-family:var(--font-mono);
+                  font-size:10px;color:var(--text2);margin-bottom:16px; }}
+    .pu-legend-item {{ display:flex;align-items:center;gap:5px; }}
+    .pu-legend-dot {{ width:9px;height:9px;border-radius:50%;display:inline-block; }}
+    .pu-chart-card {{ background:var(--bg2);border:1px solid var(--border);
+                       border-radius:8px;padding:20px 20px 8px; }}
+    .pu-axis-label {{ font-family:var(--font-mono);font-size:9px;fill:var(--text3); }}
+    .pu-point {{ cursor:pointer;transition:opacity .1s; }}
+    .pu-point:hover {{ opacity:0.65; stroke:#fff; stroke-width:1.5; }}
+    .pu-gridline {{ stroke:var(--border);stroke-width:1; }}
+    .pu-note {{ font-size:11px;color:var(--text3);margin-top:10px;padding-bottom:12px; }}
+    .pu-loading {{ color:var(--text3);font-family:var(--font-mono);font-size:13px;
+                   padding:64px;text-align:center; }}
+    .pu-tooltip {{
+      position:fixed;pointer-events:none;background:var(--bg);border:1px solid var(--border);
+      border-radius:6px;padding:8px 10px;font-family:var(--font-mono);font-size:11px;
+      z-index:50;display:none;box-shadow:0 4px 16px rgba(0,0,0,.4);
+    }}
+    .pu-tooltip .t-ticker {{ font-weight:700;font-size:13px;margin-bottom:3px; }}
+  </style>
+</head>
+<body>
+<header class="hdr">
+  <div class="hdr-l">
+    <a href="/" class="brand" style="text-decoration:none">
+      <span class="brand-mark">▲</span>
+      <div><div class="brand-name">STOCKUPSIDE<span class="brand-io">.IO</span></div>
+        <div class="brand-tag">Analyst Price Target Intelligence</div></div>
+    </a>
+  </div>
+  <div class="hdr-r">
+    <a href="/stocks" style="font-family:var(--font-mono);font-size:11px;
+       color:var(--text2);margin-right:16px">All Stocks</a>
+    <a href="/" style="font-family:var(--font-mono);font-size:11px;color:var(--text2)">← Dashboard</a>
+  </div>
+</header>
+
+<div class="pu-wrap">
+  <h1>P/E vs. Analyst Upside</h1>
+  <p class="pu-sub">
+    Every covered stock plotted by trailing P/E ratio (x-axis) against analyst
+    consensus upside (y-axis). Bubble size = market cap. Bottom-right is the
+    sweet spot: cheap stocks Wall Street still expects to run.
+  </p>
+
+  <div class="pu-controls">
+    <select id="pu-sector-filter">
+      <option value="">All sectors</option>
+    </select>
+    <select id="pu-consensus-filter">
+      <option value="">All consensus ratings</option>
+      <option value="Strong Buy">Strong Buy</option>
+      <option value="Buy">Buy</option>
+      <option value="Hold">Hold</option>
+      <option value="Sell">Sell</option>
+    </select>
+  </div>
+
+  <div class="pu-legend">
+    <span class="pu-legend-item"><span class="pu-legend-dot" style="background:#00e676"></span>Strong Buy</span>
+    <span class="pu-legend-item"><span class="pu-legend-dot" style="background:#69f0ae"></span>Buy</span>
+    <span class="pu-legend-item"><span class="pu-legend-dot" style="background:#ffd740"></span>Hold</span>
+    <span class="pu-legend-item"><span class="pu-legend-dot" style="background:#ff5252"></span>Sell</span>
+  </div>
+
+  <div class="pu-chart-card">
+    <div id="pu-chart-wrap">
+      <div class="pu-loading">Loading…</div>
+    </div>
+    <div class="pu-note" id="pu-note"></div>
+  </div>
+</div>
+
+<div class="pu-tooltip" id="pu-tooltip"></div>
+
+<footer class="ftr">
+  <div>© {yr} StockUpside.io · Updated daily · Not financial advice</div>
+  <div class="ftr-r"><a href="/">Home</a> · <a href="/stocks">All Stocks</a> · <a href="/accuracy">Accuracy</a></div>
+</footer>
+
+<script>
+(function() {{
+  let allPoints = [];
+  let peCap = 100, upsideCap = 150;
+
+  const consensusColor = c => ({{
+    "Strong Buy": "#00e676", "Buy": "#69f0ae", "Hold": "#ffd740", "Sell": "#ff5252"
+  }}[c] || "#ffd740");
+
+  function populateSectorFilter(points) {{
+    const sectors = [...new Set(points.map(p => p.sector))].sort();
+    const sel = document.getElementById("pu-sector-filter");
+    sectors.forEach(s => {{
+      const opt = document.createElement("option");
+      opt.value = s; opt.textContent = s;
+      sel.appendChild(opt);
+    }});
+  }}
+
+  function radiusFor(cap, minCap, maxCap) {{
+    // sqrt scale so area (not radius) is proportional to market cap -
+    // radius-proportional scaling makes big caps visually overwhelm the chart.
+    const minR = 3, maxR = 22;
+    const t = maxCap > minCap ? (Math.sqrt(cap) - Math.sqrt(minCap)) / (Math.sqrt(maxCap) - Math.sqrt(minCap)) : 0;
+    return minR + t * (maxR - minR);
+  }}
+
+  function render() {{
+    const sectorFilter = document.getElementById("pu-sector-filter").value;
+    const consensusFilter = document.getElementById("pu-consensus-filter").value;
+    const points = allPoints.filter(p =>
+      (!sectorFilter || p.sector === sectorFilter) &&
+      (!consensusFilter || p.consensus === consensusFilter)
+    );
+
+    const wrap = document.getElementById("pu-chart-wrap");
+    if (points.length === 0) {{
+      wrap.innerHTML = '<div class="pu-loading">No stocks match this filter.</div>';
+      document.getElementById("pu-note").textContent = "";
+      return;
+    }}
+
+    const W = wrap.clientWidth || 1000, H = 560;
+    const M = {{ top: 16, right: 20, bottom: 40, left: 50 }};
+    const plotW = W - M.left - M.right;
+    const plotH = H - M.top - M.bottom;
+
+    const xMax = peCap, yMin = -upsideCap, yMax = upsideCap;
+    const caps = points.map(p => p.market_cap);
+    const minCap = Math.min(...caps), maxCap = Math.max(...caps);
+
+    const xScale = v => M.left + (v / xMax) * plotW;
+    const yScale = v => M.top + plotH - ((v - yMin) / (yMax - yMin)) * plotH;
+
+    let svg = `<svg viewBox="0 0 ${{W}} ${{H}}" width="100%" height="${{H}}" style="overflow:visible">`;
+
+    // Gridlines + axis labels (x: PE, every 20; y: upside, every 50)
+    for (let x = 0; x <= xMax; x += 20) {{
+      svg += `<line class="pu-gridline" x1="${{xScale(x)}}" y1="${{M.top}}" x2="${{xScale(x)}}" y2="${{M.top+plotH}}"/>`;
+      svg += `<text class="pu-axis-label" x="${{xScale(x)}}" y="${{M.top+plotH+16}}" text-anchor="middle">${{x}}x</text>`;
+    }}
+    for (let y = yMin; y <= yMax; y += 50) {{
+      svg += `<line class="pu-gridline" x1="${{M.left}}" y1="${{yScale(y)}}" x2="${{M.left+plotW}}" y2="${{yScale(y)}}"/>`;
+      svg += `<text class="pu-axis-label" x="${{M.left-8}}" y="${{yScale(y)+3}}" text-anchor="end">${{y}}%</text>`;
+    }}
+    // Zero line for upside, emphasized
+    svg += `<line x1="${{M.left}}" y1="${{yScale(0)}}" x2="${{M.left+plotW}}" y2="${{yScale(0)}}" stroke="var(--text3)" stroke-width="1"/>`;
+
+    svg += `<text class="pu-axis-label" x="${{M.left+plotW/2}}" y="${{H-4}}" text-anchor="middle">TRAILING P/E</text>`;
+    svg += `<text class="pu-axis-label" x="14" y="${{M.top+plotH/2}}" text-anchor="middle" transform="rotate(-90 14 ${{M.top+plotH/2}})">ANALYST UPSIDE %</text>`;
+
+    points.forEach(p => {{
+      const r = radiusFor(p.market_cap, minCap, maxCap);
+      const cx = xScale(Math.min(p.pe_ratio, xMax));
+      const cy = yScale(p.upside_pct);
+      svg += `<circle class="pu-point" data-ticker="${{p.ticker}}" cx="${{cx}}" cy="${{cy}}" r="${{r}}"
+                fill="${{consensusColor(p.consensus)}}" fill-opacity="0.55"
+                stroke="${{consensusColor(p.consensus)}}" stroke-opacity="0.9"/>`;
+    }});
+
+    svg += `</svg>`;
+    wrap.innerHTML = svg;
+
+    const clampedCount = points.filter(p => p.clamped).length;
+    document.getElementById("pu-note").textContent =
+      `Showing ${{points.length.toLocaleString()}} stocks (P/E 0–${{peCap}}x, upside capped at ±${{upsideCap}}% for readability` +
+      (clampedCount ? ` - ${{clampedCount}} point(s) sit beyond the cap and are shown at the edge` : '') + `).`;
+
+    // Tooltip via hover
+    const tip = document.getElementById("pu-tooltip");
+    const byTicker = new Map(points.map(p => [p.ticker, p]));
+    wrap.querySelectorAll(".pu-point").forEach(el => {{
+      el.addEventListener("mousemove", e => {{
+        const p = byTicker.get(el.dataset.ticker);
+        if (!p) return;
+        tip.style.display = "block";
+        tip.style.left = (e.clientX + 14) + "px";
+        tip.style.top  = (e.clientY + 14) + "px";
+        tip.innerHTML = `<div class="t-ticker">${{p.ticker}}</div>
+          <div>P/E: ${{p.pe_ratio}}x</div>
+          <div>Upside: ${{p.upside_real >= 0 ? '+' : ''}}${{p.upside_real}}%</div>
+          <div>Sector: ${{p.sector}}</div>
+          <div>Consensus: ${{p.consensus}}</div>`;
+      }});
+      el.addEventListener("mouseleave", () => {{ tip.style.display = "none"; }});
+      el.addEventListener("click", () => {{ window.location.href = "/stocks/" + el.dataset.ticker; }});
+    }});
+  }}
+
+  async function load() {{
+    try {{
+      const r = await fetch("/api/charts/pe-upside");
+      const d = await r.json();
+      allPoints = d.points;
+      peCap = d.pe_cap;
+      upsideCap = d.upside_cap;
+      populateSectorFilter(allPoints);
+      render();
+    }} catch (e) {{
+      document.getElementById("pu-chart-wrap").innerHTML =
+        '<div class="pu-loading">Could not load chart data.</div>';
+    }}
+  }}
+
+  document.getElementById("pu-sector-filter").addEventListener("change", render);
+  document.getElementById("pu-consensus-filter").addEventListener("change", render);
+  window.addEventListener("resize", () => {{ if (allPoints.length) render(); }});
+  load();
+}})();
+</script>
 </body>
 </html>"""
 
