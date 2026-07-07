@@ -43,7 +43,7 @@ prices are typically the same ~15-min-delayed feed as Yahoo's own site —
 this is NOT a paid real-time feed.)
 """
 
-import os, sys, json, sqlite3, datetime, time
+import os, sys, json, sqlite3, datetime, time, fcntl
 
 import yfinance as yf
 
@@ -67,7 +67,11 @@ except ImportError as e:
 # How many tickers per yf.download() batch. yfinance/Yahoo can choke on
 # extremely large single requests; a few hundred per call is a safe size
 # that still keeps total request count low.
-BATCH_SIZE = 300
+# Tuned down for small droplets (e.g. 512MB RAM). A bigger batch size and
+# threads=True below increase peak memory/CPU per run — if a run takes
+# longer than the cron interval, jobs stack up and can swamp a small box
+# (this is the #1 cause of "site + SSH both slow" on tiny droplets).
+BATCH_SIZE = 100
 
 
 def get_db() -> sqlite3.Connection:
@@ -117,7 +121,7 @@ def fetch_bulk_prices(tickers: list[str]) -> dict[str, float]:
                 interval="1m",
                 group_by="ticker",
                 progress=False,
-                threads=True,
+                threads=False,  # lower peak CPU on small droplets; batches are already small
             )
         except Exception as e:
             print(f"  ⚠  Batch {i // BATCH_SIZE + 1} download failed — {e}")
@@ -149,7 +153,30 @@ def fetch_bulk_prices(tickers: list[str]) -> dict[str, float]:
     return prices
 
 
+LOCK_PATH = os.path.join(BASE_DIR, "price_refresh.lock")
+
+
 def main():
+    # Refuse to start if a previous run is still in progress. Without this,
+    # if a run ever takes longer than the cron interval (very possible on a
+    # small droplet under load), cron stacks up overlapping runs, each
+    # eating more memory/CPU — that compounding is the usual cause of a
+    # tiny droplet becoming sluggish across the board, SSH included.
+    lock_file = open(LOCK_PATH, "w")
+    try:
+        fcntl.flock(lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print(f"  ⏭  A previous price_refresh.py run is still in progress — skipping this cycle.")
+        sys.exit(0)
+
+    try:
+        _run()
+    finally:
+        fcntl.flock(lock_file, fcntl.LOCK_UN)
+        lock_file.close()
+
+
+def _run():
     date, stocks = load_today_cache()
     if not stocks:
         print("  ✗  No cached stocks found — run generate.py first.")
