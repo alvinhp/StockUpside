@@ -1538,6 +1538,7 @@ def render_changes_page(mode: str) -> str:
   </div>
 
   <div id="as-of" class="as-of"></div>
+  <div id="staleness-banner"></div>
   <div id="ch-content"><div class="no-data">Loading...</div></div>
 </div>
 
@@ -1628,7 +1629,22 @@ function fetchAndRender(days) {{
     .then(data => {{
       const asOf = document.getElementById('as-of');
       if (asOf) asOf.textContent =
-        'Comparing ' + data.as_of + ' vs ' + data.compared_to;
+        'Comparing today vs ' + data.compared_to;
+
+      const banner = document.getElementById('staleness-banner');
+      if (banner) {{
+        if (data.snapshot_staleness_days !== null && data.snapshot_staleness_days > 3) {{
+          banner.innerHTML = `<div style="margin:10px 0 20px;padding:10px 14px;border-radius:6px;
+            background:rgba(255,82,82,0.08);border:1px solid rgba(255,82,82,0.3);
+            font-size:12px;color:var(--text2)">
+            ⚠ Historical comparison data is ${{data.snapshot_staleness_days}} days stale
+            (nightly snapshot collection may be delayed). "Current" values shown here are
+            live and up to date - only the "past" side of each comparison may lag.
+          </div>`;
+        }} else {{
+          banner.innerHTML = '';
+        }}
+      }}
 
       let html = '';
 
@@ -6024,35 +6040,55 @@ def api_changes():
     tolerance       = days * 0.5
     earliest_cutoff = (datetime.date.today() - datetime.timedelta(days=days + tolerance)).isoformat()
 
-    latest_date = con.execute(
+    latest_snapshot_date = con.execute(
         "SELECT MAX(date) FROM snapshots"
     ).fetchone()[0]
 
-    if not latest_date:
-        con.close()
-        return jsonify({"upgraded": [], "downgraded": [], "new_coverage": []})
+    # How stale is the newest snapshot we have, vs. today? If the nightly
+    # snapshot job has stalled (cron broken, box overloaded, etc.), this can
+    # drift far behind "today" - surfaced here so the frontend can show a
+    # banner instead of silently comparing against old data.
+    snapshot_staleness_days = None
+    if latest_snapshot_date:
+        snapshot_staleness_days = (
+            datetime.date.today() - datetime.date.fromisoformat(latest_snapshot_date)
+        ).days
 
-    results = con.execute("""
+    if not latest_snapshot_date:
+        con.close()
+        return jsonify({
+            "upgraded": [], "downgraded": [], "new_coverage": [],
+            "snapshot_staleness_days": None,
+        })
+
+    # "Current" values come from the LIVE cache, not the snapshots table.
+    # Using the snapshots table's own "latest" row as "current" previously
+    # meant that if the nightly snapshot job stalled for days/weeks, this
+    # page would present old data as if it were today's - and worse, could
+    # visibly contradict the live stock detail page for the same ticker
+    # (exactly the BAESY bug: this page said "Strong Buy" from an 18-day-old
+    # snapshot while the live page already showed "Underperform"). Snapshots
+    # are only used now for the PAST side of the comparison, where being a
+    # point-in-time historical record is exactly what's wanted.
+    live_stocks = {s["ticker"]: s for s in get_stocks_cached()}
+
+    past_rows = con.execute("""
         SELECT
-            curr.ticker,
-            curr.consensus      AS curr_consensus,
-            curr.analyst_count  AS curr_count,
-            curr.upside_pct     AS curr_upside,
+            curr_ticker.ticker  AS ticker,
             past.consensus      AS past_consensus,
             past.analyst_count  AS past_count,
             past.date           AS past_date
-        FROM snapshots curr
+        FROM (SELECT DISTINCT ticker FROM snapshots) curr_ticker
         LEFT JOIN snapshots past
-            ON past.ticker = curr.ticker
+            ON past.ticker = curr_ticker.ticker
             AND past.date = (
                 SELECT date FROM snapshots
-                WHERE ticker = curr.ticker
+                WHERE ticker = curr_ticker.ticker
                   AND date <= ?
                 ORDER BY date DESC LIMIT 1
             )
-        WHERE curr.date = ?
-          AND (past.date IS NULL OR past.date >= ?)
-    """, (cutoff, latest_date, earliest_cutoff)).fetchall()
+        WHERE (past.date IS NULL OR past.date >= ?)
+    """, (cutoff, earliest_cutoff)).fetchall()
 
     con.close()
 
@@ -6060,8 +6096,14 @@ def api_changes():
     downgraded  = []
     new_coverage = []
 
-    for row in results:
-        ticker, curr_con, curr_n, curr_up, past_con, past_n, past_date = row
+    for ticker, past_con, past_n, past_date in past_rows:
+        live = live_stocks.get(ticker)
+        if not live:
+            continue  # ticker no longer in the live universe (delisted, dropped, etc.)
+
+        curr_con = live.get("consensus") or "Hold"
+        curr_n   = live.get("analyst_count") or 0
+        curr_up  = live.get("upside_pct")
 
         curr_score = CONSENSUS_SCORE.get(curr_con, 3)
 
@@ -6069,7 +6111,7 @@ def api_changes():
         # Quality gates: require at least 2 analysts and upside below 500%
         # to filter out penny stocks where 1 analyst sets an absurd target.
         if past_con is None:
-            if (curr_n or 0) < 2:
+            if curr_n < 2:
                 continue
             if (curr_up or 0) > 500:
                 continue
@@ -6117,7 +6159,8 @@ def api_changes():
         "upgraded":       upgraded[:25],
         "downgraded":     downgraded[:25],
         "new_coverage":   new_coverage[:10],
-        "as_of":          latest_date,
+        "as_of":          datetime.date.today().isoformat(),
+        "snapshot_staleness_days": snapshot_staleness_days,
         "compared_to":    cutoff,
         "earliest_past":  earliest_cutoff,
         "days":           days,

@@ -340,10 +340,17 @@ def merge_progress_into_cache(run_date: str):
     the new/updated rows on top of the most recent full cache: tickers
     re-processed today get their fresh data, tickers not yet reached this
     run keep yesterday's data. Ranks are recomputed over the merged set.
+
+    Returns the merged rows so crash-exit call sites (SIGTERM handler,
+    KeyboardInterrupt, fatal exception) can also pass them to
+    save_snapshot() — see the call sites in main() for why that matters:
+    without it, a run that never reaches the end of generate_stocks()
+    never gets its accuracy-tracking snapshot written, even though the
+    cache itself was safely checkpointed.
     """
     new_rows = list(load_progress(run_date).values())
     if not new_rows:
-        return
+        return []
 
     base_rows = get_most_recent_full_cache(exclude_date=run_date)
 
@@ -363,6 +370,7 @@ def merge_progress_into_cache(run_date: str):
     print(f"  ↻  Checkpoint: merged {len(new_rows)} fresh + "
           f"{len(rows)-len(new_rows)} carried-over stocks "
           f"({len(rows)} total) into cache for {run_date}")
+    return rows
 
 def clear_progress(run_date: str):
     """Remove checkpoint rows for a completed run."""
@@ -1468,7 +1476,9 @@ if __name__ == "__main__":
     # checkpoint. Translate it into a clean, immediate partial merge + exit.
     def _on_sigterm(signum, frame):
         print(f"\n  ✗  Received signal {signum} — checkpointing before exit.")
-        merge_progress_into_cache(run_date)
+        merged_rows = merge_progress_into_cache(run_date)
+        if merged_rows:
+            save_snapshot(merged_rows)
         print(f"  ↻  Partial progress saved — re-run to resume from where this left off.")
         sys.exit(1)
 
@@ -1501,11 +1511,15 @@ if __name__ == "__main__":
 
     except KeyboardInterrupt:
         print("\n  ✗  Interrupted by user.")
-        merge_progress_into_cache(run_date)
+        merged_rows = merge_progress_into_cache(run_date)
+        if merged_rows:
+            save_snapshot(merged_rows)
         print(f"  ↻  Partial progress saved — re-run to resume from where this left off.")
         sys.exit(1)
     except Exception as e:
         print(f"\n  ✗  Fatal error: {e}")
-        merge_progress_into_cache(run_date)
+        merged_rows = merge_progress_into_cache(run_date)
+        if merged_rows:
+            save_snapshot(merged_rows)
         print(f"  ↻  Partial progress saved — re-run to resume from where this left off.")
         sys.exit(1)
