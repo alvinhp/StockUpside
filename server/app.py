@@ -3645,7 +3645,7 @@ def api_refresh():
 
     def _run():
         set_generating(True)
-        RUN_TIMEOUT  = 3 * 3600
+        RUN_TIMEOUT  = 6 * 3600
         GRACE_PERIOD = 60
         try:
             with open(LOG_PATH, "a") as logfile:
